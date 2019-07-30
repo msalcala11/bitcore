@@ -1,11 +1,21 @@
 {
   "version": "0.2.0",
-  "configurations": [
-    {
+  "configurations": [{
       "type": "node",
       "request": "launch",
       "name": "Launch & Debug Node",
       "program": "${workspaceFolder}/build/src/server.js",
+      "args": ["--DEBUG", "true"],
+      "sourceMaps": true,
+      "outFiles": ["${workspaceFolder}/build/**/*.js"],
+      "console": "integratedTerminal",
+      "preLaunchTask": "npm: compile"
+    },
+    {
+      "type": "node",
+      "request": "launch",
+      "name": "Debug Stress Test",
+      "program": "${workspaceFolder}/build/src/stress.js",
       "args": ["--DEBUG", "true"],
       "sourceMaps": true,
       "outFiles": ["${workspaceFolder}/build/**/*.js"],
