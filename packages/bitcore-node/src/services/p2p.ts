@@ -175,7 +175,7 @@ export class P2pWorker {
       if (!blockInCache) {
         this.cacheInv(this.bitcoreP2p.Inventory.TYPE.BLOCK, hash);
       }
-      if (this.isSyncingNode && (!blockInCache || this.isSyncing)) {
+      if ((this.isSyncingNode || true) && (!blockInCache || this.isSyncing)) {
         this.events.emit(hash, message.block);
         this.events.emit('block', message.block);
         if (!this.isSyncing) {
