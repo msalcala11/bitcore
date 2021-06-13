@@ -201,9 +201,11 @@ Script.fromString = function(str) {
       } else {
         throw new Error('Invalid script: ' + JSON.stringify(str));
       }
-    } else if (opcodenum === Opcode.OP_PUSHDATA1 ||
+    } else if (
+      opcodenum === Opcode.OP_PUSHDATA1 ||
       opcodenum === Opcode.OP_PUSHDATA2 ||
-      opcodenum === Opcode.OP_PUSHDATA4) {
+      opcodenum === Opcode.OP_PUSHDATA4
+    ) {
       if (tokens[i + 2].slice(0, 2) !== '0x') {
         throw new Error('Pushdata data must start with 0x');
       }
@@ -225,7 +227,7 @@ Script.fromString = function(str) {
 
 Script.prototype._chunkToString = function(chunk, type) {
   var opcodenum = chunk.opcodenum;
-  var asm = (type === 'asm');
+  var asm = type === 'asm';
   var str = '';
   if (!chunk.buf) {
     // no data chunk
@@ -236,7 +238,7 @@ Script.prototype._chunkToString = function(chunk, type) {
         if (opcodenum === 0) {
           // OP_0 -> 0
           str = str + ' 0';
-        } else if(opcodenum === 79) {
+        } else if (opcodenum === 79) {
           // OP_1NEGATE -> 1
           str = str + ' -1';
         } else {
@@ -258,9 +260,10 @@ Script.prototype._chunkToString = function(chunk, type) {
     }
   } else {
     // data chunk
-    if (!asm && (opcodenum === Opcode.OP_PUSHDATA1 ||
-      opcodenum === Opcode.OP_PUSHDATA2 ||
-      opcodenum === Opcode.OP_PUSHDATA4)) {
+    if (
+      !asm &&
+      (opcodenum === Opcode.OP_PUSHDATA1 || opcodenum === Opcode.OP_PUSHDATA2 || opcodenum === Opcode.OP_PUSHDATA4)
+    ) {
       str = str + ' ' + Opcode(opcodenum).toString();
     }
     if (chunk.len > 0) {
@@ -308,13 +311,15 @@ Script.prototype.inspect = function() {
  * @returns {boolean} if this is a pay to pubkey hash output script
  */
 Script.prototype.isPublicKeyHashOut = function() {
-  return !!(this.chunks.length === 5 &&
+  return !!(
+    this.chunks.length === 5 &&
     this.chunks[0].opcodenum === Opcode.OP_DUP &&
     this.chunks[1].opcodenum === Opcode.OP_HASH160 &&
     this.chunks[2].buf &&
     this.chunks[2].buf.length === 20 &&
     this.chunks[3].opcodenum === Opcode.OP_EQUALVERIFY &&
-    this.chunks[4].opcodenum === Opcode.OP_CHECKSIG);
+    this.chunks[4].opcodenum === Opcode.OP_CHECKSIG
+  );
 };
 
 /**
@@ -324,15 +329,9 @@ Script.prototype.isPublicKeyHashIn = function() {
   if (this.chunks.length === 2) {
     var signatureBuf = this.chunks[0].buf;
     var pubkeyBuf = this.chunks[1].buf;
-    if (signatureBuf &&
-        signatureBuf.length &&
-        pubkeyBuf &&
-        pubkeyBuf.length
-       ) {
+    if (signatureBuf && signatureBuf.length && pubkeyBuf && pubkeyBuf.length) {
       var version = pubkeyBuf[0];
-      if ((version === 0x04 ||
-           version === 0x06 ||
-           version === 0x07) && pubkeyBuf.length === 65) {
+      if ((version === 0x04 || version === 0x06 || version === 0x07) && pubkeyBuf.length === 65) {
         return true;
       } else if ((version === 0x03 || version === 0x02) && pubkeyBuf.length === 33) {
         return true;
@@ -343,12 +342,12 @@ Script.prototype.isPublicKeyHashIn = function() {
 };
 
 Script.prototype.getPublicKey = function() {
-  $.checkState(this.isPublicKeyOut(), 'Can\'t retrieve PublicKey from a non-PK output');
+  $.checkState(this.isPublicKeyOut(), "Can't retrieve PublicKey from a non-PK output");
   return this.chunks[0].buf;
 };
 
 Script.prototype.getPublicKeyHash = function() {
-  $.checkState(this.isPublicKeyHashOut(), 'Can\'t retrieve PublicKeyHash from a non-PKH output');
+  $.checkState(this.isPublicKeyHashOut(), "Can't retrieve PublicKeyHash from a non-PKH output");
   return this.chunks[2].buf;
 };
 
@@ -356,16 +355,16 @@ Script.prototype.getPublicKeyHash = function() {
  * @returns {boolean} if this is a public key output script
  */
 Script.prototype.isPublicKeyOut = function() {
-  if (this.chunks.length === 2 &&
-      this.chunks[0].buf &&
-      this.chunks[0].buf.length &&
-      this.chunks[1].opcodenum === Opcode.OP_CHECKSIG) {
+  if (
+    this.chunks.length === 2 &&
+    this.chunks[0].buf &&
+    this.chunks[0].buf.length &&
+    this.chunks[1].opcodenum === Opcode.OP_CHECKSIG
+  ) {
     var pubkeyBuf = this.chunks[0].buf;
     var version = pubkeyBuf[0];
     var isVersion = false;
-    if ((version === 0x04 ||
-         version === 0x06 ||
-         version === 0x07) && pubkeyBuf.length === 65) {
+    if ((version === 0x04 || version === 0x06 || version === 0x07) && pubkeyBuf.length === 65) {
       isVersion = true;
     } else if ((version === 0x03 || version === 0x02) && pubkeyBuf.length === 33) {
       isVersion = true;
@@ -383,9 +382,7 @@ Script.prototype.isPublicKeyOut = function() {
 Script.prototype.isPublicKeyIn = function() {
   if (this.chunks.length === 1) {
     var signatureBuf = this.chunks[0].buf;
-    if (signatureBuf &&
-        signatureBuf.length &&
-        signatureBuf[0] === 0x30) {
+    if (signatureBuf && signatureBuf.length && signatureBuf[0] === 0x30) {
       return true;
     }
   }
@@ -397,10 +394,9 @@ Script.prototype.isPublicKeyIn = function() {
  */
 Script.prototype.isScriptHashOut = function() {
   var buf = this.toBuffer();
-  return (buf.length === 23 &&
-    buf[0] === Opcode.OP_HASH160 &&
-    buf[1] === 0x14 &&
-    buf[buf.length - 1] === Opcode.OP_EQUAL);
+  return (
+    buf.length === 23 && buf[0] === Opcode.OP_HASH160 && buf[1] === 0x14 && buf[buf.length - 1] === Opcode.OP_EQUAL
+  );
 };
 
 /**
@@ -434,39 +430,38 @@ Script.prototype.isScriptHashIn = function() {
  * @returns {boolean} if this is a mutlsig output script
  */
 Script.prototype.isMultisigOut = function() {
-  return (this.chunks.length > 3 &&
+  return (
+    this.chunks.length > 3 &&
     Opcode.isSmallIntOp(this.chunks[0].opcodenum) &&
     this.chunks.slice(1, this.chunks.length - 2).every(function(obj) {
       return obj.buf && BufferUtil.isBuffer(obj.buf);
     }) &&
     Opcode.isSmallIntOp(this.chunks[this.chunks.length - 2].opcodenum) &&
-    this.chunks[this.chunks.length - 1].opcodenum === Opcode.OP_CHECKMULTISIG);
+    this.chunks[this.chunks.length - 1].opcodenum === Opcode.OP_CHECKMULTISIG
+  );
 };
-
 
 /**
  * @returns {boolean} if this is a multisig input script
  */
 Script.prototype.isMultisigIn = function() {
-  return this.chunks.length >= 2 &&
+  return (
+    this.chunks.length >= 2 &&
     this.chunks[0].opcodenum === 0 &&
     this.chunks.slice(1, this.chunks.length).every(function(obj) {
-      return obj.buf &&
-        BufferUtil.isBuffer(obj.buf) &&
-        Signature.isTxDER(obj.buf);
-    });
+      return obj.buf && BufferUtil.isBuffer(obj.buf) && Signature.isTxDER(obj.buf);
+    })
+  );
 };
 
 /**
  * @returns {boolean} true if this is a valid standard OP_RETURN output
  */
 Script.prototype.isDataOut = function() {
-  var step1 = this.chunks.length >= 1 &&
-    this.chunks[0].opcodenum === Opcode.OP_RETURN &&
-    this.toBuffer().length <= 223; // 223 instead of 220 because (+1 for OP_RETURN, +2 for the pushdata opcodes)
+  var step1 = this.chunks.length >= 1 && this.chunks[0].opcodenum === Opcode.OP_RETURN && this.toBuffer().length <= 223; // 223 instead of 220 because (+1 for OP_RETURN, +2 for the pushdata opcodes)
   if (!step1) return false;
   var chunks = this.chunks.slice(1);
-  var script2 = new Script({chunks: chunks});
+  var script2 = new Script({ chunks: chunks });
   return script2.isPushOnly();
 };
 
@@ -496,13 +491,14 @@ Script.prototype.getData = function() {
  */
 Script.prototype.isPushOnly = function() {
   return _.every(this.chunks, function(chunk) {
-    return chunk.opcodenum <= Opcode.OP_16 ||
+    return (
+      chunk.opcodenum <= Opcode.OP_16 ||
       chunk.opcodenum === Opcode.OP_PUSHDATA1 ||
       chunk.opcodenum === Opcode.OP_PUSHDATA2 ||
-      chunk.opcodenum === Opcode.OP_PUSHDATA4;
+      chunk.opcodenum === Opcode.OP_PUSHDATA4
+    );
   });
 };
-
 
 Script.types = {};
 Script.types.UNKNOWN = 'Unknown';
@@ -572,7 +568,6 @@ Script.prototype.classifyInput = function() {
   return Script.types.UNKNOWN;
 };
 
-
 /**
  * @returns {boolean} if script is one of the known types
  */
@@ -580,7 +575,6 @@ Script.prototype.isStandard = function() {
   // TODO: Add BIP62 compliance
   return this.classify() !== Script.types.UNKNOWN;
 };
-
 
 // Script construction methods
 
@@ -663,9 +657,12 @@ Script.prototype._addOpcode = function(opcode, prepend) {
   } else {
     op = Opcode(opcode).toNumber();
   }
-  this._insertAtPosition({
-    opcodenum: op
-  }, prepend);
+  this._insertAtPosition(
+    {
+      opcodenum: op
+    },
+    prepend
+  );
   return this;
 };
 
@@ -681,16 +678,18 @@ Script.prototype._addBuffer = function(buf, prepend) {
   } else if (len < Math.pow(2, 32)) {
     opcodenum = Opcode.OP_PUSHDATA4;
   } else {
-    throw new Error('You can\'t push that much data');
+    throw new Error("You can't push that much data");
   }
-  this._insertAtPosition({
-    buf: buf,
-    len: len,
-    opcodenum: opcodenum
-  }, prepend);
+  this._insertAtPosition(
+    {
+      buf: buf,
+      len: len,
+      opcodenum: opcodenum
+    },
+    prepend
+  );
   return this;
 };
-
 
 Script.prototype.removeCodeseparators = function() {
   var chunks = [];
@@ -715,8 +714,10 @@ Script.prototype.removeCodeseparators = function() {
  *                      public keys before creating the script
  */
 Script.buildMultisigOut = function(publicKeys, threshold, opts) {
-  $.checkArgument(threshold <= publicKeys.length,
-    'Number of required signatures must be less than or equal to the number of public keys');
+  $.checkArgument(
+    threshold <= publicKeys.length,
+    'Number of required signatures must be less than or equal to the number of public keys'
+  );
   opts = opts || {};
   var script = new Script();
   script.add(Opcode.smallInt(threshold));
@@ -755,41 +756,37 @@ Script.buildMultisigIn = function(pubkeys, threshold, signatures, opts) {
   opts = opts || {};
   var s = new Script();
 
-  if (opts.signingMethod === "schnorr" && opts.checkBits) {
-
+  if (opts.signingMethod === 'schnorr' && opts.checkBits) {
     // Spec according to https://github.com/bitcoincashorg/bitcoincash.org/blob/master/spec/2019-11-15-schnorrmultisig.md#scriptsig-size
-    let checkBitsString = Buffer.from(opts.checkBits).reverse().join('');
+    let checkBitsString = Buffer.from(opts.checkBits)
+      .reverse()
+      .join('');
     let checkBitsDecimal = parseInt(checkBitsString, 2);
     let checkBitsHex = parseInt(checkBitsDecimal.toString(16), 16);
     let N = pubkeys.length;
-      // N should only be 1-20
-        if (N >= 1 && N <= 4) {
-          s.add(Opcode(checkBitsHex));
-        }
-        else if (N >= 5 && N <= 8) {
-        if(checkBitsHex === 0x81) {
-            s.add(Opcode("OP_1NEGATE")) // OP_1NEGATE
-          } else if(checkBitsHex > 0x10) {
-            s.add(0x01);
-            s.add(checkBitsHex);
-          } else {
-            s.add(Opcode(checkBitsHex));
-          }
-          
-        }
-        else if (N >= 9 && N <= 16) {
-          s.add(0x02);
-          s.add(checkBitsHex);
-        } 
-        else if (N >= 17 && N <= 20) {
-          s.add(0x03);
-          s.add(checkBitsHex);
-        }
-    } else {
-      s.add(Opcode.OP_0); // ecdsa schnorr mode; multisig dummy param of 0
+    // N should only be 1-20
+    if (N >= 1 && N <= 4) {
+      s.add(Opcode(checkBitsHex));
+    } else if (N >= 5 && N <= 8) {
+      if (checkBitsHex === 0x81) {
+        s.add(Opcode('OP_1NEGATE')); // OP_1NEGATE
+      } else if (checkBitsHex > 0x10) {
+        s.add(0x01);
+        s.add(checkBitsHex);
+      } else {
+        s.add(Opcode(checkBitsHex));
+      }
+    } else if (N >= 9 && N <= 16) {
+      s.add(0x02);
+      s.add(checkBitsHex);
+    } else if (N >= 17 && N <= 20) {
+      s.add(0x03);
+      s.add(checkBitsHex);
     }
-  
-  
+  } else {
+    s.add(Opcode.OP_0); // ecdsa schnorr mode; multisig dummy param of 0
+  }
+
   _.each(signatures, function(signature) {
     $.checkArgument(BufferUtil.isBuffer(signature), 'Signatures must be an array of Buffers');
     // TODO: allow signatures to be an array of Signature objects
@@ -818,40 +815,38 @@ Script.buildP2SHMultisigIn = function(pubkeys, threshold, signatures, opts) {
   $.checkArgument(_.isArray(signatures));
   opts = opts || {};
   var s = new Script();
-  
-  if (opts.signingMethod === "schnorr" && opts.checkBits) {
 
+  if (opts.signingMethod === 'schnorr' && opts.checkBits) {
     // Spec according to https://github.com/bitcoincashorg/bitcoincash.org/blob/master/spec/2019-11-15-schnorrmultisig.md#scriptsig-size
-    let checkBitsString = Buffer.from(opts.checkBits).reverse().join('');
+    let checkBitsString = Buffer.from(opts.checkBits)
+      .reverse()
+      .join('');
     let checkBitsDecimal = parseInt(checkBitsString, 2);
     let checkBitsHex = parseInt(checkBitsDecimal.toString(16), 16);
     let N = pubkeys.length;
     // N should only be 1-20
-      if (N >= 1 && N <= 4) {
+    if (N >= 1 && N <= 4) {
+      s.add(Opcode.smallInt(checkBitsDecimal));
+    } else if (N >= 5 && N <= 8) {
+      if (checkBitsHex === 0x81) {
+        s.add(Opcode('OP_1NEGATE')); // OP_1NEGATE
+      } else if (checkBitsHex > 0x10) {
+        s.add(0x01);
+        s.add(checkBitsHex);
+      } else {
         s.add(Opcode.smallInt(checkBitsDecimal));
       }
-      else if (N >= 5 && N <= 8) {
-       if(checkBitsHex === 0x81) {
-          s.add(Opcode("OP_1NEGATE")) // OP_1NEGATE
-        } else if(checkBitsHex > 0x10) {
-          s.add(0x01);
-          s.add(checkBitsHex);
-        } else {
-          s.add(Opcode.smallInt(checkBitsDecimal));
-        }
-      }
-      else if (N >= 9 && N <= 16) {
-        s.add(0x02);
-        s.add(checkBitsHex);
-      } 
-      else if (N >= 17 && N <= 20) {
-        s.add(0x03);
-        s.add(checkBitsHex);
-      }
+    } else if (N >= 9 && N <= 16) {
+      s.add(0x02);
+      s.add(checkBitsHex);
+    } else if (N >= 17 && N <= 20) {
+      s.add(0x03);
+      s.add(checkBitsHex);
+    }
   } else {
     s.add(Opcode.OP_0); // ecdsa schnorr mode; multisig dummy param of 0
   }
-  
+
   _.each(signatures, function(signature) {
     $.checkArgument(BufferUtil.isBuffer(signature), 'Signatures must be an array of Buffers');
     // TODO: allow signatures to be an array of Signature objects
@@ -891,8 +886,7 @@ Script.buildPublicKeyHashOut = function(to) {
 Script.buildPublicKeyOut = function(pubkey) {
   $.checkArgument(pubkey instanceof PublicKey);
   var s = new Script();
-  s.add(pubkey.toBuffer())
-    .add(Opcode.OP_CHECKSIG);
+  s.add(pubkey.toBuffer()).add(Opcode.OP_CHECKSIG);
   return s;
 };
 
@@ -920,8 +914,7 @@ Script.buildDataOut = function(data, encoding) {
  * @returns {Script} new pay to script hash script for given script
  */
 Script.buildScriptHashOut = function(script) {
-  $.checkArgument(script instanceof Script ||
-    (script instanceof Address && script.isPayToScriptHash()));
+  $.checkArgument(script instanceof Script || (script instanceof Address && script.isPayToScriptHash()));
   var s = new Script();
   s.add(Opcode.OP_HASH160)
     .add(script instanceof Address ? script.hashBuffer : Hash.sha256ripemd160(script.toBuffer()))
@@ -944,10 +937,7 @@ Script.buildPublicKeyIn = function(signature, sigtype) {
     signature = signature.toBuffer();
   }
   var script = new Script();
-  script.add(BufferUtil.concat([
-    signature,
-    BufferUtil.integerAsSingleByteBuffer(sigtype || Signature.SIGHASH_ALL)
-  ]));
+  script.add(BufferUtil.concat([signature, BufferUtil.integerAsSingleByteBuffer(sigtype || Signature.SIGHASH_ALL)]));
   return script;
 };
 
@@ -966,10 +956,7 @@ Script.buildPublicKeyHashIn = function(publicKey, signature, sigtype) {
     signature = signature.toBuffer();
   }
   var script = new Script()
-    .add(BufferUtil.concat([
-      signature,
-      BufferUtil.integerAsSingleByteBuffer(sigtype || Signature.SIGHASH_ALL)
-    ]))
+    .add(BufferUtil.concat([signature, BufferUtil.integerAsSingleByteBuffer(sigtype || Signature.SIGHASH_ALL)]))
     .add(new PublicKey(publicKey).toBuffer());
   return script;
 };
@@ -1101,7 +1088,7 @@ Script.prototype.findAndDelete = function(script) {
  * @returns {boolean} if the chunk {i} is the smallest way to push that particular data.
  */
 Script.prototype.checkMinimalPush = function(i) {
-  var chunk = this.   chunks[i];
+  var chunk = this.chunks[i];
   var buf = chunk.buf;
   var opcodenum = chunk.opcodenum;
   if (!buf) {
@@ -1151,7 +1138,7 @@ Script.prototype._decodeOP_N = function(opcode) {
  * @returns {number} number of signature operations required by this script
  */
 Script.prototype.getSignatureOperationsCount = function(accurate) {
-  accurate = (_.isUndefined(accurate) ? true : accurate);
+  accurate = _.isUndefined(accurate) ? true : accurate;
   var self = this;
   var n = 0;
   var lastOpcode = Opcode.OP_INVALIDOPCODE;

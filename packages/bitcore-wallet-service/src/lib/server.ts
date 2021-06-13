@@ -2255,6 +2255,8 @@ export class WalletService {
                   if (opts.sendMax) return next();
                   try {
                     changeAddress = await ChainService.getChangeAddress(this, wallet, opts);
+                    logger.debug('first change address');
+                    logger.debug(changeAddress);
                   } catch (error) {
                     return next(error);
                   }
@@ -2344,6 +2346,19 @@ export class WalletService {
                 },
                 next => {
                   return ChainService.selectTxInputs(this, txp, wallet, opts, next);
+                },
+                async next => {
+                  if (txp.coin !== 'bch' || !opts.instantAcceptanceEscrow) return next();
+                  try {
+                    opts.inputs = txp.inputs;
+                    changeAddress = await ChainService.getChangeAddress(this, wallet, opts);
+                    logger.debug('second change address');
+                    logger.debug(changeAddress);
+                    txp.changeAddress = changeAddress;
+                  } catch (error) {
+                    return next(error);
+                  }
+                  return next();
                 },
                 next => {
                   if (!changeAddress || wallet.singleAddress || opts.dryRun || opts.changeAddress) return next();

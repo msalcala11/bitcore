@@ -187,7 +187,8 @@ export class BtcChain implements IChain {
               return cb(null, address);
             });
           } else {
-            return cb(null, wallet.createAddress(true), true);
+            const escrowInputs = opts.instantAcceptanceEscrow ? opts.inputs : undefined;
+            return cb(null, wallet.createAddress(true, undefined, escrowInputs), true);
           }
         }
       };
@@ -241,7 +242,10 @@ export class BtcChain implements IChain {
       const a = this.bitcoreLib.Address(address);
       addressType = a.type;
     }
+    return this.getEstimatedSizeForAddressType(addressType);
+  }
 
+  getEstimatedSizeForAddressType(addressType?: string) {
     let scriptSize;
     switch (addressType) {
       case 'pubkeyhash':
@@ -278,6 +282,10 @@ export class BtcChain implements IChain {
     _.each(addresses, x => {
       outputsSize += this.getEstimatedSizeForSingleOutput(x);
     });
+
+    if (opts.instantAcceptanceEscrow) {
+      outputsSize += this.getEstimatedSizeForAddressType('scripthash');
+    }
 
     // If there is no *output* yet defined, (eg: get sendmax info), add a single, default, output);
     if (!outputsSize) {
@@ -514,7 +522,10 @@ export class BtcChain implements IChain {
       return cb(this.checkTx(txp));
     }
 
-    const feeOpts = { conservativeEstimation: opts.payProUrl ? true : false };
+    const feeOpts = {
+      conservativeEstimation: opts.payProUrl ? true : false,
+      instantAcceptanceEscrow: opts.instantAcceptanceEscrow || 'not set'
+    };
     const txpAmount = txp.getTotalAmount();
     const baseTxpSize = this.getEstimatedSize(txp, feeOpts);
     const baseTxpFee = (baseTxpSize * txp.feePerKb) / 1000;

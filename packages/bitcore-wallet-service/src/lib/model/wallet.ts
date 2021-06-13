@@ -255,7 +255,7 @@ export class Wallet {
     return this.scanning;
   }
 
-  createAddress(isChange, step) {
+  createAddress(isChange, step, escrowInputs) {
     $.checkState(this.isComplete(), 'Failed state: this.isComplete() at <createAddress()>');
 
     const path = this.addressManager.getNewAddressPath(isChange, step);
@@ -269,7 +269,8 @@ export class Wallet {
       this.coin,
       this.network,
       isChange,
-      !this.nativeCashAddr
+      !this.nativeCashAddr,
+      escrowInputs
     );
     return address;
   }

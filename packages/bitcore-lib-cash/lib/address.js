@@ -70,7 +70,7 @@ function Address(data, network, type) {
     throw new TypeError('Second argument must be "livenet", "testnet", or "regtest".');
   }
 
-  if (type && (type !== Address.PayToPublicKeyHash && type !== Address.PayToScriptHash)) {
+  if (type && type !== Address.PayToPublicKeyHash && type !== Address.PayToScriptHash) {
     throw new TypeError('Third argument must be "pubkeyhash" or "scripthash".');
   }
 
@@ -107,7 +107,7 @@ Address.prototype._classifyArguments = function(data, network, type) {
     return Address._transformPublicKey(data);
   } else if (data instanceof Script) {
     return Address._transformScript(data, network);
-  } else if (typeof(data) === 'string') {
+  } else if (typeof data === 'string') {
     return Address._transformString(data, network, type);
   } else if (_.isObject(data)) {
     return Address._transformObject(data);
@@ -270,13 +270,34 @@ Address.createMultisig = function(publicKeys, threshold, network) {
   return Address.payingTo(Script.buildMultisigOut(publicKeys, threshold), network);
 };
 
+/**
+ * Creates a P2SH Zero-Conf Escrow (ZCE) address from a set of input public keys and a reclaim public key.
+ *
+ * @param {Array} inputPublicKeys - the set of public keys needed to sign all inputs in a ZCE transaction
+ * @param {PublicKey} reclaimPublicKey - the public key required to reclaim the escrow
+ * @param {String|Network} network - either a Network instance, 'livenet', or 'testnet'
+ * @return {Address}
+ */
+Address.createEscrow = function(inputPublicKeys, reclaimPublicKey, network) {
+  const inputPublicKeyHashes = inputPublicKeys.map(publicKey =>
+    Hash.sha256ripemd160(PublicKey.fromString(publicKey).toBuffer()).toString('hex')
+  );
+  const reclaimPublicKeyHash = Hash.sha256ripemd160(reclaimPublicKey.toBuffer()).toString('hex');
+  const zceRedeemScript = Script.fromString(
+    `OP_DUP OP_HASH160 OP_PUSHBYTES_20 0x${reclaimPublicKeyHash} OP_EQUAL OP_IF OP_CHECKSIG OP_ELSE OP_DUP OP_HASH160 OP_PUSHBYTES_20 0x${inputPublicKeyHashes[0]} OP_EQUAL OP_TOALTSTACK OP_DUP OP_HASH160 OP_PUSHBYTES_20 0x${inputPublicKeyHashes[1]} OP_EQUAL OP_FROMALTSTACK OP_BOOLOR OP_IF OP_OVER OP_4 OP_PICK OP_EQUAL OP_NOT OP_VERIFY OP_DUP OP_TOALTSTACK OP_CHECKDATASIGVERIFY OP_FROMALTSTACK OP_CHECKDATASIG OP_ELSE OP_RETURN OP_ENDIF OP_ENDIF`.replace(
+      new RegExp('OP_PUSHBYTES_', 'g'),
+      ''
+    )
+  );
+  network = network || reclaimPublicKey.network || Networks.defaultNetwork;
+  return Address.payingTo(zceRedeemScript, network);
+};
+
 function decodeCashAddress(address) {
-
-
   function hasSingleCase(string) {
     var lowerCase = string.toLowerCase();
     var upperCase = string.toUpperCase();
-    var hasSingleCase  = string === lowerCase || string === upperCase;
+    var hasSingleCase = string === lowerCase || string === upperCase;
 
     return hasSingleCase;
   }
@@ -284,7 +305,7 @@ function decodeCashAddress(address) {
   function validChecksum(prefix, payload) {
     function prefixToArray(prefix) {
       var result = [];
-      for (var i=0; i<prefix.length; i++) {
+      for (var i = 0; i < prefix.length; i++) {
         result.push(prefix.charCodeAt(i) & 31);
       }
       return result;
@@ -298,7 +319,7 @@ function decodeCashAddress(address) {
   address = address.toLowerCase();
 
   var pieces = address.split(':');
-  $.checkArgument(pieces.length <= 2, 'Invalid format:'+ address);
+  $.checkArgument(pieces.length <= 2, 'Invalid format:' + address);
 
   var prefix, encodedPayload;
 
@@ -313,47 +334,45 @@ function decodeCashAddress(address) {
   var payload = base32.decode(encodedPayload.toLowerCase());
 
   if (prefix) {
-    $.checkArgument(validChecksum(prefix, payload), 'Invalid checksum:'+ address);
+    $.checkArgument(validChecksum(prefix, payload), 'Invalid checksum:' + address);
   } else {
-
-    var netNames = ['livenet','testnet','regtest'];
+    var netNames = ['livenet', 'testnet', 'regtest'];
     var i;
 
-    while(!prefix && (i = netNames.shift())){
-      var p  =  Networks.get(i).prefix;
-      if(validChecksum(p, payload)) {
+    while (!prefix && (i = netNames.shift())) {
+      var p = Networks.get(i).prefix;
+      if (validChecksum(p, payload)) {
         prefix = p;
       }
     }
-    $.checkArgument(prefix, 'Invalid checksum:'+ address);
+    $.checkArgument(prefix, 'Invalid checksum:' + address);
   }
 
   var convertedBits = convertBits(payload.slice(0, -8), 5, 8, true);
   var versionByte = convertedBits.shift();
   var hash = convertedBits;
 
-  $.checkArgument(getHashSize(versionByte) === hash.length * 8, 'Invalid hash size:'+ address);
+  $.checkArgument(getHashSize(versionByte) === hash.length * 8, 'Invalid hash size:' + address);
 
   function getType(versionByte) {
     switch (versionByte & 120) {
-    case 0:
-      return 'pubkeyhash';
-    case 8:
-      return 'scripthash';
-    default:
-      throw new Error('Invalid address type in version byte:' + versionByte);
+      case 0:
+        return 'pubkeyhash';
+      case 8:
+        return 'scripthash';
+      default:
+        throw new Error('Invalid address type in version byte:' + versionByte);
     }
   }
 
-
   var type = getType(versionByte);
   var network = Networks.get(prefix);
-//console.log('[address.js.336:network:]',network); //TODO
+  //console.log('[address.js.336:network:]',network); //TODO
 
   var info = {};
 
   //return { prefix, type, hash };
-//console.log('[address.js.339]', hash); //TODO
+  //console.log('[address.js.339]', hash); //TODO
 
   info.hashBuffer = Buffer.from(hash);
   info.network = network;
@@ -361,7 +380,7 @@ function decodeCashAddress(address) {
   return info;
 }
 
-Address._decodeCashAddress = decodeCashAddress
+Address._decodeCashAddress = decodeCashAddress;
 
 /**
  * Internal function to transform a bitcoin cash address string
@@ -373,14 +392,14 @@ Address._decodeCashAddress = decodeCashAddress
  * @private
  */
 Address._transformString = function(data, network, type) {
-  if (typeof(data) !== 'string') {
+  if (typeof data !== 'string') {
     throw new TypeError('data parameter supplied is not a string.');
   }
-  if (data.length < 34){
+  if (data.length < 34) {
     throw new Error('Invalid Address string provided');
   }
 
-  if(data.length > 100) {
+  if (data.length > 100) {
     throw new TypeError('address string is too long');
   }
 
@@ -391,7 +410,7 @@ Address._transformString = function(data, network, type) {
     throw new TypeError('Unknown network');
   }
 
-  if (data.length > 35){
+  if (data.length > 35) {
     var info = decodeCashAddress(data);
     if (!info.network || (networkObj && networkObj.name !== info.network.name)) {
       throw new TypeError('Address has mismatched network type.');
@@ -406,7 +425,6 @@ Address._transformString = function(data, network, type) {
     return Address._transformBuffer(addressBuffer, network, type);
   }
 };
-
 
 /**
  * Instantiate an address from a PublicKey instance
@@ -514,10 +532,7 @@ Address.fromString = function(str, network, type) {
  * @returns {Address} A new valid instance of an Address
  */
 Address.fromObject = function fromObject(obj) {
-  $.checkState(
-    JSUtil.isHexa(obj.hash),
-    'Unexpected hash property, "' + obj.hash + '", expected to be hex.'
-  );
+  $.checkState(JSUtil.isHexa(obj.hash), 'Unexpected hash property, "' + obj.hash + '", expected to be hex.');
   var hashBuffer = Buffer.from(obj.hash, 'hex');
   return new Address(hashBuffer, obj.network, obj.type);
 };
@@ -630,7 +645,7 @@ Address.prototype.toCashBuffer = function() {
  *
  * @returns {string} Bitcoin address
  */
-Address.prototype.toLegacyAddress = function () {
+Address.prototype.toLegacyAddress = function() {
   return Base58Check.encode(this.toBuffer());
 };
 
@@ -641,7 +656,6 @@ Address.prototype.toLegacyAddress = function () {
  * @returns {string} Bitcoin Cash address
  */
 
-
 Address.prototype.toCashAddress = function(stripPrefix) {
   function getTypeBits(type) {
     switch (type) {
@@ -650,7 +664,7 @@ Address.prototype.toCashAddress = function(stripPrefix) {
       case 'scripthash':
         return 8;
       default:
-        throw new Error('Invalid type:'+ type);
+        throw new Error('Invalid type:' + type);
     }
   }
 
@@ -673,21 +687,21 @@ Address.prototype.toCashAddress = function(stripPrefix) {
       case 512:
         return 7;
       default:
-        throw new Error('Invalid hash size:'+ hash.length);
-      }
+        throw new Error('Invalid hash size:' + hash.length);
+    }
   }
 
-  var eight0 = [0,0,0,0, 0,0,0,0];
+  var eight0 = [0, 0, 0, 0, 0, 0, 0, 0];
   var prefixData = this.network.prefixArray.concat([0]);
   var versionByte = getTypeBits(this.type) + getHashSizeBits(this.hashBuffer);
-  var arr =  Array.prototype.slice.call(this.hashBuffer, 0);
+  var arr = Array.prototype.slice.call(this.hashBuffer, 0);
   var payloadData = convertBits([versionByte].concat(arr), 8, 5);
   var checksumData = prefixData.concat(payloadData).concat(eight0);
   var payload = payloadData.concat(checksumToArray(polymod(checksumData)));
-  if(stripPrefix === true) {
+  if (stripPrefix === true) {
     return base32.encode(payload);
   } else {
-    return this.network.prefix+ ':' + base32.encode(payload);
+    return this.network.prefix + ':' + base32.encode(payload);
   }
 };
 
@@ -706,25 +720,24 @@ Address.prototype.toString = Address.prototype.toCashAddress;
  */
 function getHashSize(versionByte) {
   switch (versionByte & 7) {
-  case 0:
-    return 160;
-  case 1:
-    return 192;
-  case 2:
-    return 224;
-  case 3:
-    return 256;
-  case 4:
-    return 320;
-  case 5:
-    return 384;
-  case 6:
-    return 448;
-  case 7:
-    return 512;
+    case 0:
+      return 160;
+    case 1:
+      return 192;
+    case 2:
+      return 224;
+    case 3:
+      return 256;
+    case 4:
+      return 320;
+    case 5:
+      return 384;
+    case 6:
+      return 448;
+    case 7:
+      return 512;
   }
 }
-
 
 /***
  * Returns an array representation of the given checksum to be encoded
@@ -752,7 +765,9 @@ var GENERATOR2 = [0xf2bc8e61, 0xb76d99e2, 0x3e5fb3c4, 0x2eabe2a8, 0x4f43e470];
 
 function polymod(data) {
   // Treat c as 8 bits + 32 bits
-  var c0 = 0, c1 = 1, C = 0;
+  var c0 = 0,
+    c1 = 1,
+    C = 0;
   for (var j = 0; j < data.length; j++) {
     // Set C to c shifted by 35
     C = c0 >>> 3;

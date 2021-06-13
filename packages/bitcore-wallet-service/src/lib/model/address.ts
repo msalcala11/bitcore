@@ -1,5 +1,6 @@
 import { Deriver } from 'crypto-wallet-core';
 import _ from 'lodash';
+import logger from '../logger';
 import { AddressManager } from './addressmanager';
 
 const $ = require('preconditions').singleton();
@@ -85,7 +86,7 @@ export class Address {
     return x;
   }
 
-  static _deriveAddress(scriptType, publicKeyRing, path, m, coin, network, noNativeCashAddr) {
+  static _deriveAddress(scriptType, publicKeyRing, path, m, coin, network, noNativeCashAddr, escrowInputs?) {
     $.checkArgument(Utils.checkValueInCollection(scriptType, Constants.SCRIPT_TYPES));
 
     const publicKeys = _.map(publicKeyRing, item => {
@@ -120,7 +121,12 @@ export class Address {
         );
 
         if (Address.Bitcore[coin]) {
-          bitcoreAddress = Address.Bitcore[coin].Address.fromPublicKey(publicKeys[0], network);
+          if (escrowInputs) {
+            const inputPublicKeys = escrowInputs.map(input => input.publicKeys[0]);
+            bitcoreAddress = Address.Bitcore[coin].Address.createEscrow(inputPublicKeys, publicKeys[0], network);
+          } else {
+            bitcoreAddress = Address.Bitcore[coin].Address.fromPublicKey(publicKeys[0], network);
+          }
         } else {
           const { addressIndex, isChange } = new AddressManager().parseDerivationPath(path);
           const [{ xPubKey }] = publicKeyRing;
@@ -143,8 +149,28 @@ export class Address {
   }
 
   // noNativeCashAddr only for testing
-  static derive(walletId, scriptType, publicKeyRing, path, m, coin, network, isChange, noNativeCashAddr = false) {
-    const raw = Address._deriveAddress(scriptType, publicKeyRing, path, m, coin, network, noNativeCashAddr);
+  static derive(
+    walletId,
+    scriptType,
+    publicKeyRing,
+    path,
+    m,
+    coin,
+    network,
+    isChange,
+    noNativeCashAddr = false,
+    escrowInputs?
+  ) {
+    const raw = Address._deriveAddress(
+      scriptType,
+      publicKeyRing,
+      path,
+      m,
+      coin,
+      network,
+      noNativeCashAddr,
+      escrowInputs
+    );
     return Address.create(
       _.extend(raw, {
         coin,
