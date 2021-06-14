@@ -89,7 +89,7 @@ export class Address {
   static _deriveAddress(scriptType, publicKeyRing, path, m, coin, network, noNativeCashAddr, escrowInputs?) {
     $.checkArgument(Utils.checkValueInCollection(scriptType, Constants.SCRIPT_TYPES));
 
-    const publicKeys = _.map(publicKeyRing, item => {
+    let publicKeys = _.map(publicKeyRing, item => {
       const xpub = Address.Bitcore[coin]
         ? new Address.Bitcore[coin].HDPublicKey(item.xPubKey)
         : new Address.Bitcore.btc.HDPublicKey(item.xPubKey);
@@ -122,8 +122,11 @@ export class Address {
 
         if (Address.Bitcore[coin]) {
           if (escrowInputs) {
-            const inputPublicKeys = escrowInputs.map(input => input.publicKeys[0]);
+            const inputPublicKeys = escrowInputs.map(input =>
+              Address.Bitcore[coin].PublicKey.fromString(input.publicKeys[0])
+            );
             bitcoreAddress = Address.Bitcore[coin].Address.createEscrow(inputPublicKeys, publicKeys[0], network);
+            publicKeys = [publicKeys[0], ...inputPublicKeys];
           } else {
             bitcoreAddress = Address.Bitcore[coin].Address.fromPublicKey(publicKeys[0], network);
           }

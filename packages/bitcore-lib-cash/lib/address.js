@@ -280,14 +280,11 @@ Address.createMultisig = function(publicKeys, threshold, network) {
  */
 Address.createEscrow = function(inputPublicKeys, reclaimPublicKey, network) {
   const inputPublicKeyHashes = inputPublicKeys.map(publicKey =>
-    Hash.sha256ripemd160(PublicKey.fromString(publicKey).toBuffer()).toString('hex')
+    Hash.sha256ripemd160(publicKey.toBuffer()).toString('hex')
   );
   const reclaimPublicKeyHash = Hash.sha256ripemd160(reclaimPublicKey.toBuffer()).toString('hex');
   const zceRedeemScript = Script.fromString(
-    `OP_DUP OP_HASH160 OP_PUSHBYTES_20 0x${reclaimPublicKeyHash} OP_EQUAL OP_IF OP_CHECKSIG OP_ELSE OP_DUP OP_HASH160 OP_PUSHBYTES_20 0x${
-      inputPublicKeyHashes[0]
-    } OP_EQUAL OP_TOALTSTACK OP_DUP OP_HASH160 OP_PUSHBYTES_20 0x${inputPublicKeyHashes[1] ||
-      inputPublicKeyHashes[0]} OP_EQUAL OP_FROMALTSTACK OP_BOOLOR OP_IF OP_OVER OP_4 OP_PICK OP_EQUAL OP_NOT OP_VERIFY OP_DUP OP_TOALTSTACK OP_CHECKDATASIGVERIFY OP_FROMALTSTACK OP_CHECKDATASIG OP_ELSE OP_RETURN OP_ENDIF OP_ENDIF`.replace(
+    `OP_DUP OP_HASH160 OP_PUSHBYTES_20 0x${reclaimPublicKeyHash} OP_EQUAL OP_IF OP_CHECKSIG OP_ELSE OP_DUP OP_HASH160 OP_PUSHBYTES_20 0x${inputPublicKeyHashes[0]} OP_EQUAL OP_TOALTSTACK OP_DUP OP_HASH160 OP_PUSHBYTES_20 0x${inputPublicKeyHashes[0]} OP_EQUAL OP_FROMALTSTACK OP_BOOLOR OP_IF OP_OVER OP_4 OP_PICK OP_EQUAL OP_NOT OP_VERIFY OP_DUP OP_TOALTSTACK OP_CHECKDATASIGVERIFY OP_FROMALTSTACK OP_CHECKDATASIG OP_ELSE OP_RETURN OP_ENDIF OP_ENDIF`.replace(
       new RegExp('OP_PUSHBYTES_', 'g'),
       ''
     )
