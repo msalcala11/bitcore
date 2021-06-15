@@ -705,6 +705,31 @@ Script.prototype.removeCodeseparators = function() {
 // high level script builder methods
 
 /**
+ * @returns {Script} a new escrow output redeem script for given input public keys and reclaim public key
+ * @param {PublicKey[]} inputPublicKeys - list of all public keys associated with each P2PKH input of the 
+ * zero-conf escrow transaction
+ * @param {PublicKey} reclaimPublicKey - the public key used to reclaim the escrow by the customer
+ */
+ Script.buildEscrowOut = function(inputPublicKeys, reclaimPublicKey) {
+  $.checkArgument(
+    inputPublicKeys.length > 0,
+    'Must provide at least one input public key'
+  );
+  const inputPublicKeyHashes = inputPublicKeys.map(publicKey =>
+    Hash.sha256ripemd160(publicKey.toBuffer()).toString('hex')
+  );
+  const reclaimPublicKeyHash = Hash.sha256ripemd160(reclaimPublicKey.toBuffer()).toString('hex');
+  const zceRedeemScript = Script.fromString(
+    `OP_DUP OP_HASH160 OP_PUSHBYTES_20 0x${reclaimPublicKeyHash} OP_EQUAL OP_IF OP_CHECKSIG OP_ELSE OP_DUP OP_HASH160 OP_PUSHBYTES_20 0x${inputPublicKeyHashes[0]} OP_EQUAL OP_TOALTSTACK OP_DUP OP_HASH160 OP_PUSHBYTES_20 0x${inputPublicKeyHashes[0]} OP_EQUAL OP_FROMALTSTACK OP_BOOLOR OP_IF OP_OVER OP_4 OP_PICK OP_EQUAL OP_NOT OP_VERIFY OP_DUP OP_TOALTSTACK OP_CHECKDATASIGVERIFY OP_FROMALTSTACK OP_CHECKDATASIG OP_ELSE OP_RETURN OP_ENDIF OP_ENDIF`.replace(
+      new RegExp('OP_PUSHBYTES_', 'g'),
+      ''
+    )
+  );
+  return zceRedeemScript;
+};
+
+
+/**
  * @returns {Script} a new Multisig output script for given public keys,
  * requiring m of those public keys to spend
  * @param {PublicKey[]} publicKeys - list of all public keys controlling the output

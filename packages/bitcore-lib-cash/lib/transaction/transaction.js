@@ -21,9 +21,11 @@ var PublicKeyHashInput = Input.PublicKeyHash;
 var PublicKeyInput = Input.PublicKey;
 var MultiSigScriptHashInput = Input.MultiSigScriptHash;
 var MultiSigInput = Input.MultiSig;
+var EscrowInput = Input.Escrow;
 var Output = require('./output');
 var Script = require('../script');
 var PrivateKey = require('../privatekey');
+var PublicKey = require('../publickey');
 var BN = require('../crypto/bn');
 
 /**
@@ -554,9 +556,29 @@ Transaction.prototype.from = function(utxo, pubkeys, threshold, opts) {
   if (pubkeys && threshold) {
     this._fromMultisigUtxo(utxo, pubkeys, threshold, opts);
   } else {
-    this._fromNonP2SH(utxo);
+    if(utxo.publicKeys && utxo.publicKeys.length > 1) {
+      this._fromEscrowUtxo(utxo, utxo.publicKeys);
+    } else {
+      this._fromNonP2SH(utxo);
+    }
   }
   return this;
+};
+
+Transaction.prototype._fromEscrowUtxo = function(utxo, pubkeys) {
+  const publicKeys = pubkeys.map(pubkey => new PublicKey(pubkey));
+  const inputPublicKeys = publicKeys.slice(1);
+  const reclaimPublicKey = publicKeys[0];
+  utxo = new UnspentOutput(utxo);
+  this.addInput(new EscrowInput({
+    output: new Output({
+      script: utxo.script,
+      satoshis: utxo.satoshis
+    }),
+    prevTxId: utxo.txId,
+    outputIndex: utxo.outputIndex,
+    script: Script.empty()
+  }, inputPublicKeys, reclaimPublicKey));
 };
 
 Transaction.prototype._fromNonP2SH = function(utxo) {
