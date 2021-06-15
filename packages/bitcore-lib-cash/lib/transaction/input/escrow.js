@@ -46,7 +46,7 @@ EscrowInput.prototype.getSignatures = function(transaction, privateKey, index, s
 
 EscrowInput.prototype.addSignature = function(transaction, signature, signingMethod) {
     // $.checkState(this.isValidSignature(transaction, signature, signingMethod));
-    const signatureString = signature.signature.toBuffer('schnorr').toString('hex');
+    const signatureString = signature.signature.toBuffer('schnorr').toString('hex') + '41';
     const reclaimScript = `OP_PUSHBYTES_${
         signatureString.length / 2
       } 0x${signatureString} OP_PUSHBYTES_33 0x${this.reclaimPublicKey.toString()} OP_PUSHDATA_1 ${
