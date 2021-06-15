@@ -44,6 +44,19 @@ EscrowInput.prototype.getSignatures = function(transaction, privateKey, index, s
     return [signature];
 };
 
+EscrowInput.prototype.addSignature = function(transaction, signature, signingMethod) {
+    // $.checkState(this.isValidSignature(transaction, signature, signingMethod));
+    const signatureString = signature.signature.toBuffer('schnorr').toString('hex');
+    const reclaimScript = `OP_PUSHBYTES_${
+        signatureString.length / 2
+      } 0x${signatureString} OP_PUSHBYTES_33 0x${this.reclaimPublicKey.toString()} OP_PUSHDATA_1 ${
+        this.redeemScript.toHex().length / 2
+      } 0x${this.redeemScript.toHex()}`
+        .replace(new RegExp('OP_PUSHBYTES_', 'g'), '')
+        .replace(new RegExp('PUSHDATA_1', 'g'), 'PUSHDATA1');
+    this.setScript(reclaimScript);
+}
+
 EscrowInput.prototype.clearSignatures = function() {}
 
 module.exports = EscrowInput;
