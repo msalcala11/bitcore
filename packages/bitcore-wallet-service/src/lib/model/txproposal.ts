@@ -68,6 +68,10 @@ export interface ITxProposal {
   destinationTag?: string;
   invoiceID?: string;
   lockUntilBlockHeight?: number;
+  instantAcceptanceEscrow?: {
+    satoshis: number;
+  };
+  allowNotYetBroadcastUtxos?: boolean;
 }
 
 export class TxProposal {
@@ -127,6 +131,10 @@ export class TxProposal {
   destinationTag?: string;
   invoiceID?: string;
   lockUntilBlockHeight?: number;
+  instantAcceptanceEscrow?: {
+    satoshis: number;
+  };
+  allowNotYetBroadcastUtxos?: boolean;
 
   static create(opts) {
     opts = opts || {};
@@ -319,7 +327,8 @@ export class TxProposal {
    * @return {Number} total amount of all outputs excluding change output
    */
   getTotalAmount() {
-    return _.sumBy(this.outputs, 'amount');
+    const escrow = this.instantAcceptanceEscrow ? this.instantAcceptanceEscrow.satoshis : 0;
+    return _.sumBy(this.outputs, 'amount') + escrow;
   }
 
   /**
