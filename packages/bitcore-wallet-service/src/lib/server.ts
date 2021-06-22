@@ -2360,7 +2360,7 @@ export class WalletService {
                   } catch (error) {
                     return next(error);
                   }
-                  if(opts.dryRun) return next();
+                  if (opts.dryRun) return next();
                   this._store(wallet, txp.escrowAddress, next, true);
                 },
                 next => {

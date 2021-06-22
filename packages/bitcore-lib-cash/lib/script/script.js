@@ -711,16 +711,19 @@ Script.prototype.removeCodeseparators = function() {
  * @param {PublicKey} reclaimPublicKey - the public key used to reclaim the escrow by the customer
  */
  Script.buildEscrowOut = function(inputPublicKeys, reclaimPublicKey) {
-  $.checkArgument(
-    inputPublicKeys.length > 0,
-    'Must provide at least one input public key'
-  );
-  const inputPublicKeyHashes = inputPublicKeys.map(publicKey =>
-    Hash.sha256ripemd160(publicKey.toBuffer()).toString('hex')
-  );
-  const reclaimPublicKeyHash = Hash.sha256ripemd160(reclaimPublicKey.toBuffer()).toString('hex');
+  $.checkArgument(inputPublicKeys.length > 0, 'Must provide at least one input public key');
+  $.checkArgument(reclaimPublicKey, 'Must provide a reclaim public key');
+  const hash160 = (publicKey) => Hash.sha256ripemd160(publicKey.toBuffer()).toString('hex');
+  const inputPublicKeyHashes = inputPublicKeys.map(publicKey => hash160(publicKey));
+  const reclaimPublicKeyHash = hash160(reclaimPublicKey);
+  const checkAgainstFirstInputPublicKey = `OP_DUP OP_HASH160 OP_PUSHBYTES_20 0x${inputPublicKeyHashes[0]} OP_EQUAL`;
+  const remainingPublicKeyHashes = inputPublicKeyHashes.slice(1);
+  const checkAgainstRemainingInputPublicKeys = remainingPublicKeyHashes.map(publicKeyHash => {
+    return `OP_TOALTSTACK OP_DUP OP_HASH160 OP_PUSHBYTES_20 0x${publicKeyHash} OP_EQUAL OP_FROMALTSTACK OP_BOOLOR`
+  }).join(' ');
+  const checkAgainstAllInputPublicKeys = `${checkAgainstFirstInputPublicKey} ${checkAgainstRemainingInputPublicKeys}`.trim();
   const zceRedeemScript = Script.fromString(
-    `OP_DUP OP_HASH160 OP_PUSHBYTES_20 0x${reclaimPublicKeyHash} OP_EQUAL OP_IF OP_CHECKSIG OP_ELSE OP_DUP OP_HASH160 OP_PUSHBYTES_20 0x${inputPublicKeyHashes[0]} OP_EQUAL OP_TOALTSTACK OP_DUP OP_HASH160 OP_PUSHBYTES_20 0x${inputPublicKeyHashes[0]} OP_EQUAL OP_FROMALTSTACK OP_BOOLOR OP_IF OP_OVER OP_4 OP_PICK OP_EQUAL OP_NOT OP_VERIFY OP_DUP OP_TOALTSTACK OP_CHECKDATASIGVERIFY OP_FROMALTSTACK OP_CHECKDATASIG OP_ELSE OP_RETURN OP_ENDIF OP_ENDIF`.replace(
+    `OP_DUP OP_HASH160 OP_PUSHBYTES_20 0x${reclaimPublicKeyHash} OP_EQUAL OP_IF OP_CHECKSIG OP_ELSE ${checkAgainstAllInputPublicKeys} OP_IF OP_OVER OP_4 OP_PICK OP_EQUAL OP_NOT OP_VERIFY OP_DUP OP_TOALTSTACK OP_CHECKDATASIGVERIFY OP_FROMALTSTACK OP_CHECKDATASIG OP_ELSE OP_RETURN OP_ENDIF OP_ENDIF`.replace(
       new RegExp('OP_PUSHBYTES_', 'g'),
       ''
     )
