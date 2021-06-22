@@ -383,6 +383,10 @@ export class BtcChain implements IChain {
       }
     });
 
+    if (txp.instantAcceptanceEscrow && txp.escrowAddress) {
+      t.to(txp.escrowAddress.address, txp.instantAcceptanceEscrow.satoshis);
+    }
+
     t.fee(txp.fee);
 
     if (txp.changeAddress) {
@@ -492,7 +496,7 @@ export class BtcChain implements IChain {
           return !utxo || utxo.locked;
         });
 
-        if (unavailable) return cb(Errors.UNAVAILABLE_UTXOS);
+        if (unavailable && !txp.allowNotYetBroadcastUtxos) return cb(Errors.UNAVAILABLE_UTXOS);
         return cb();
       }
     );
@@ -526,7 +530,8 @@ export class BtcChain implements IChain {
       conservativeEstimation: opts.payProUrl ? true : false,
       instantAcceptanceEscrow: opts.instantAcceptanceEscrow || 'not set'
     };
-    const txpAmount = txp.getTotalAmount();
+    const escrowAmount = opts.instantAcceptanceEscrow ? opts.instantAcceptanceEscrow.satoshis : 0;
+    const txpAmount = txp.getTotalAmount() + escrowAmount;
     const baseTxpSize = this.getEstimatedSize(txp, feeOpts);
     const baseTxpFee = (baseTxpSize * txp.feePerKb) / 1000;
     const sizePerInput = this.getEstimatedSizeForSingleInput(txp, feeOpts);
@@ -862,6 +867,8 @@ export class BtcChain implements IChain {
   addressToStorageTransform(network, address) {}
 
   addSignaturesToBitcoreTx(tx, inputs, inputPaths, signatures, xpub, signingMethod) {
+    logger.debug('in addSignaturesToBitcoreTx\n\n');
+    logger.debug(signingMethod);
     signingMethod = signingMethod || 'ecdsa';
     if (signatures.length != inputs.length) throw new Error('Number of signatures does not match number of inputs');
 
@@ -880,7 +887,10 @@ export class BtcChain implements IChain {
         };
         tx.inputs[i].addSignature(tx, s, signingMethod);
         i++;
-      } catch (e) {}
+      } catch (e) {
+        logger.debug('addSignature error');
+        logger.debug(e);
+      }
     });
 
     if (i != tx.inputs.length) throw new Error('Wrong signatures');

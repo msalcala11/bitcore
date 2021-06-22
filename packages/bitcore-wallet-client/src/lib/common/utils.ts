@@ -360,6 +360,10 @@ export class Utils {
         });
       }
 
+      if (txp.instantAcceptanceEscrow && txp.escrowAddress) {
+        t.to(txp.escrowAddress.address, txp.instantAcceptanceEscrow.satoshis);
+      }
+
       t.fee(txp.fee);
       t.change(txp.changeAddress.address);
 

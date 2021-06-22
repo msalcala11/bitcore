@@ -2324,6 +2324,8 @@ export class WalletService {
                     walletM: wallet.m,
                     walletN: wallet.n,
                     excludeUnconfirmedUtxos: !!opts.excludeUnconfirmedUtxos,
+                    allowNotYetBroadcastUtxos: !!opts.allowNotYetBroadcastUtxos,
+                    instantAcceptanceEscrow: opts.instantAcceptanceEscrow,
                     validateOutputs: !opts.validateOutputs,
                     addressType: wallet.addressType,
                     customData: opts.customData,
@@ -2351,10 +2353,11 @@ export class WalletService {
                   if (txp.coin !== 'bch' || !opts.instantAcceptanceEscrow) return next();
                   try {
                     opts.inputs = txp.inputs;
-                    changeAddress = await ChainService.getChangeAddress(this, wallet, opts);
-                    logger.debug('second change address');
-                    logger.debug(changeAddress);
-                    txp.changeAddress = changeAddress;
+                    const escrowAddress = await ChainService.getChangeAddress(this, wallet, opts);
+                    logger.debug('escrowAddress');
+                    logger.debug(escrowAddress);
+                    txp.escrowAddress = escrowAddress;
+                    this._store(wallet, txp.escrowAddress, next, true);
                   } catch (error) {
                     return next(error);
                   }

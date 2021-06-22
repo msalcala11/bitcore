@@ -15,6 +15,7 @@ export interface IAddress {
   address: string;
   walletId: string;
   isChange: boolean;
+  isEscrow: boolean;
   path: string;
   publicKeys: string[];
   coin: string;
@@ -30,6 +31,7 @@ export class Address {
   address: string;
   walletId: string;
   isChange: boolean;
+  isEscrow: boolean;
   path: string;
   publicKeys: string[];
   coin: string;
@@ -56,6 +58,7 @@ export class Address {
     x.address = opts.address;
     x.walletId = opts.walletId;
     x.isChange = opts.isChange;
+    x.isEscrow = opts.isEscrow;
     x.path = opts.path;
     x.publicKeys = opts.publicKeys;
     x.coin = opts.coin;
@@ -78,6 +81,7 @@ export class Address {
     x.coin = obj.coin || Defaults.COIN;
     x.network = obj.network;
     x.isChange = obj.isChange;
+    x.isEscrow = obj.isEscrow;
     x.path = obj.path;
     x.publicKeys = obj.publicKeys;
     x.type = obj.type || Constants.SCRIPT_TYPES.P2SH;
@@ -180,7 +184,8 @@ export class Address {
         network,
         walletId,
         type: scriptType,
-        isChange
+        isChange,
+        isEscrow: !!escrowInputs
       })
     );
   }
