@@ -2357,11 +2357,11 @@ export class WalletService {
                     logger.debug('escrowAddress');
                     logger.debug(escrowAddress);
                     txp.escrowAddress = escrowAddress;
-                    this._store(wallet, txp.escrowAddress, next, true);
                   } catch (error) {
                     return next(error);
                   }
-                  return next();
+                  if(opts.dryRun) return next();
+                  this._store(wallet, txp.escrowAddress, next, true);
                 },
                 next => {
                   if (!changeAddress || wallet.singleAddress || opts.dryRun || opts.changeAddress) return next();

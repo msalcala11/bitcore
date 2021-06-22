@@ -172,7 +172,7 @@ export class TxProposal {
       return _.pick(output, ['amount', 'toAddress', 'message', 'data', 'gasLimit', 'script']);
     });
     let numOutputs = x.outputs.length + 1;
-    if(x.instantAcceptanceEscrow) {
+    if (x.instantAcceptanceEscrow) {
       numOutputs = numOutputs + 1;
     }
     x.outputOrder = _.range(numOutputs);
