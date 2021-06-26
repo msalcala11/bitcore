@@ -775,9 +775,15 @@ export class BtcChain implements IChain {
         next => {
           const group = groups[i++];
 
-          const candidateUtxos = _.filter(utxos, utxo => {
+          let candidateUtxos = _.filter(utxos, utxo => {
             return utxo.confirmations >= group;
           });
+
+          if(opts.instantAcceptanceEscrow && wallet.isZceCompatible()) {
+            const utxosSortedByDescendingAmount = candidateUtxos.sort((a, b) => b.amount - a.amount);
+            const utxosWithUniqueAddresses = _.uniqBy(utxosSortedByDescendingAmount, 'address');
+            candidateUtxos = utxosWithUniqueAddresses;
+          }
 
           // logger.debug('Group >= ' + group);
 

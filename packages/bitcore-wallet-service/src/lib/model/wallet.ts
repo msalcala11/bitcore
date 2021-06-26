@@ -255,6 +255,10 @@ export class Wallet {
     return this.scanning;
   }
 
+  isZceCompatible() {
+    return this.coin === 'bch' && this.addressType === 'P2PKH';
+  }
+
   createAddress(isChange, step, escrowInputs) {
     $.checkState(this.isComplete(), 'Failed state: this.isComplete() at <createAddress()>');
 
