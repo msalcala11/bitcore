@@ -1306,7 +1306,7 @@ export class WalletService {
     const createNewAddress = (wallet, cb) => {
       let address;
       try {
-        address = wallet.createAddress(false);
+        address = wallet.createAddress(!!opts.isChange);
       } catch (e) {
         this.logw('Error creating address', e);
         return cb('Bad xPub');
@@ -1521,7 +1521,7 @@ export class WalletService {
               if (utxos.length == 0) return cb(null, []);
 
               let unusableAddresses = [];
-              if(isEscrowPayment) {
+              if (isEscrowPayment) {
                 const unusableUtxos = utxos.filter(utxo => utxo.spent || utxo.address.startsWith('p'));
                 unusableAddresses = unusableUtxos.map(utxo => utxo.address);
               }
