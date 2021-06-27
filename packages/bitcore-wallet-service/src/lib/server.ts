@@ -1515,14 +1515,18 @@ export class WalletService {
             if (err) return next(err);
 
             const dustThreshold = Bitcore_[wallet.coin].Transaction.DUST_AMOUNT;
-            const includeSpent = wallet.isZceCompatible() && opts.instantAcceptanceEscrow ? true : false;
-            bc.getUtxos(wallet, height, { includeSpent }, (err, utxos) => {
+            const isEscrowPayment = wallet.isZceCompatible() && opts.instantAcceptanceEscrow ? true : false;
+            bc.getUtxos(wallet, height, { includeSpent: isEscrowPayment }, (err, utxos) => {
               if (err) return next(err);
               if (utxos.length == 0) return cb(null, []);
 
-              const spentAddresses = utxos.filter(utxo => utxo.spent).map(utxo => utxo.address);
+              let unusableAddresses = [];
+              if(isEscrowPayment) {
+                const unusableUtxos = utxos.filter(utxo => utxo.spent || utxo.address.startsWith('p'));
+                unusableAddresses = unusableUtxos.map(utxo => utxo.address);
+              }
 
-              allUtxos = utxos.filter(x => x.satoshis >= dustThreshold && !spentAddresses.includes(x.address));
+              allUtxos = utxos.filter(x => x.satoshis >= dustThreshold && !unusableAddresses.includes(x.address));
 
               return next();
             });
