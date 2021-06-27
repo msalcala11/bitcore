@@ -1566,7 +1566,7 @@ export class WalletService {
                 err => {
                   if (err) return next(err);
                   allUtxos = allUtxos.map(utxo => {
-                    if(lockedAddresses.includes(utxo.address)) {
+                    if (lockedAddresses.includes(utxo.address)) {
                       utxo.locked = true;
                     }
                     return utxo;
