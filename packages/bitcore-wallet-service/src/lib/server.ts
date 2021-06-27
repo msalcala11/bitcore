@@ -1519,44 +1519,20 @@ export class WalletService {
               if (err) return next(err);
               if (utxos.length == 0) return cb(null, []);
 
-              
               // filter out DUST
               allUtxos = _.filter(utxos, x => {
                 return x.satoshis >= dustThreshold;
               });
-              
+
               return next();
             });
           });
         },
-        // next => {
-        //   if(!wallet.isZceCompatible()) return next();
-          
-        //   const escrowUtxos = _.filter(allUtxos , x => {
-        //     return wallet.isZceCompatible() && x.address.startsWith('p');
-        //   });
-        //   let lockedAddresses = [];
-        //   async.each(
-        //     escrowUtxos,
-        //     (utxo: any, next) => {
-        //       this.getCoinsForTx({ txId: utxo.txid }, (err, coins) => {
-        //         if(err) return next(err);
-        //         const inputAddresses = coins.inputs.map(input => input.address);
-        //         lockedAddresses = lockedAddresses.concat(inputAddresses);
-        //       });
-        //     },
-        //     err => {
-        //       console.log('err', err);
-        //       return next();
-        //     }
-        //   );
-        //   next();
-        // },
         next => {
-          if(!wallet.isZceCompatible()) return next();
+          if (!wallet.isZceCompatible()) return next();
 
           const unconfirmedUtxos = _.filter(allUtxos, x => !x.confirmations);
-          const escrowUtxos = _.filter(allUtxos , x => x.address.startsWith('p'));
+          const escrowUtxos = _.filter(allUtxos, x => x.address.startsWith('p'));
 
           let unreclaimedEscrowCoins = [...escrowUtxos];
           let lockedAddresses = [];
@@ -1565,29 +1541,31 @@ export class WalletService {
             unconfirmedUtxos,
             (utxo: any, next) => {
               this.getCoinsForTx({ txId: utxo.txid }, (err, coins) => {
-                if(err) return next(err);
+                if (err) return next(err);
                 const escrowCoins = coins.inputs.filter(input => input.address.startsWith('p'));
                 unreclaimedEscrowCoins = unreclaimedEscrowCoins.concat(escrowCoins);
                 lockedAddresses.push(utxo.address);
-                next();
+                return next();
               });
             },
             err => {
-              if(err) return next(err);
+              if (err) return next(err);
               async.each(
                 unreclaimedEscrowCoins,
                 (utxo: any, next) => {
-                  this.getCoinsForTx({ txId: utxo.txid }, (err, coins) => {
-                    if(err) return next(err);
+                  const txId = utxo.txid || utxo.mintTxid;
+                  this.getCoinsForTx({ txId }, (err, coins) => {
+                    if (err) return next(err);
                     const inputAddresses = coins.inputs.map(input => input.address);
                     lockedAddresses = lockedAddresses.concat(inputAddresses);
-                    next();
+                    return next();
                   });
                 },
                 err => {
+                  if(err) return next(err);
                   console.log('err', err);
                   allUtxos = allUtxos.filter(utxo => !lockedAddresses.includes(utxo.address));
-                  next();
+                  return next();
                 }
               );
             }
