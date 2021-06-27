@@ -1522,7 +1522,7 @@ export class WalletService {
 
               const spentAddresses = utxos.filter(utxo => utxo.spent).map(utxo => utxo.address);
 
-              allUtxos = utxos.filter(x => x.satoshis >= dustThreshold && !spentAddresses.includes(x.address))
+              allUtxos = utxos.filter(x => x.satoshis >= dustThreshold && !spentAddresses.includes(x.address));
 
               return next();
             });
@@ -1544,7 +1544,7 @@ export class WalletService {
                 if (err) return next(err);
                 const escrowCoins = coins.inputs.filter(input => input.address.startsWith('p'));
                 unreclaimedEscrowCoins = unreclaimedEscrowCoins.concat(escrowCoins);
-                if(escrowCoins.length) { 
+                if (escrowCoins.length) {
                   lockedAddresses.push(utxo.address);
                 }
                 return next();

@@ -184,9 +184,9 @@ export class V8 {
     const client = this._getAuthClient(wallet);
     console.time('V8getUtxos');
     client
-      .getCoins({ 
-        pubKey: wallet.beAuthPublicKey2, 
-        payload: {}, 
+      .getCoins({
+        pubKey: wallet.beAuthPublicKey2,
+        payload: {},
         ...params
       })
       .then(utxos => {
