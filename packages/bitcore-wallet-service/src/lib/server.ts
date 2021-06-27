@@ -1562,8 +1562,7 @@ export class WalletService {
                   });
                 },
                 err => {
-                  if(err) return next(err);
-                  console.log('err', err);
+                  if (err) return next(err);
                   allUtxos = allUtxos.filter(utxo => !lockedAddresses.includes(utxo.address));
                   return next();
                 }
