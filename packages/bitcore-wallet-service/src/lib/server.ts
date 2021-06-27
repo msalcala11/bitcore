@@ -1515,14 +1515,14 @@ export class WalletService {
             if (err) return next(err);
 
             const dustThreshold = Bitcore_[wallet.coin].Transaction.DUST_AMOUNT;
-            bc.getUtxos(wallet, height, (err, utxos) => {
+            const includeSpent = wallet.isZceCompatible() && opts.instantAcceptanceEscrow ? true : false;
+            bc.getUtxos(wallet, height, { includeSpent }, (err, utxos) => {
               if (err) return next(err);
               if (utxos.length == 0) return cb(null, []);
 
-              // filter out DUST
-              allUtxos = _.filter(utxos, x => {
-                return x.satoshis >= dustThreshold;
-              });
+              const spentAddresses = utxos.filter(utxo => utxo.spent).map(utxo => utxo.address);
+
+              allUtxos = utxos.filter(x => x.satoshis >= dustThreshold && !spentAddresses.includes(x.address))
 
               return next();
             });
@@ -1544,7 +1544,9 @@ export class WalletService {
                 if (err) return next(err);
                 const escrowCoins = coins.inputs.filter(input => input.address.startsWith('p'));
                 unreclaimedEscrowCoins = unreclaimedEscrowCoins.concat(escrowCoins);
-                lockedAddresses.push(utxo.address);
+                if(escrowCoins.length) { 
+                  lockedAddresses.push(utxo.address);
+                }
                 return next();
               });
             },

@@ -738,7 +738,9 @@ export class BtcChain implements IChain {
 
     // logger.debug('Selecting inputs for a ' + Utils.formatAmountInBtc(txp.getTotalAmount()) + ' txp');
 
-    server.getUtxosForCurrentWallet({}, (err, utxos) => {
+    server.getUtxosForCurrentWallet({
+      instantAcceptanceEscrow: txp.instantAcceptanceEscrow
+    }, (err, utxos) => {
       if (err) return cb(err);
 
       let totalAmount;
@@ -779,7 +781,7 @@ export class BtcChain implements IChain {
             return utxo.confirmations >= group;
           });
 
-          if(opts.instantAcceptanceEscrow && wallet.isZceCompatible()) {
+          if (opts.instantAcceptanceEscrow && wallet.isZceCompatible()) {
             const utxosSortedByDescendingAmount = candidateUtxos.sort((a, b) => b.amount - a.amount);
             const utxosWithUniqueAddresses = _.uniqBy(utxosSortedByDescendingAmount, 'address');
             candidateUtxos = utxosWithUniqueAddresses;
