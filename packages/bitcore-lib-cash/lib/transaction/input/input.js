@@ -10,7 +10,6 @@ var JSUtil = require('../../util/js');
 var Script = require('../../script');
 var Sighash = require('../sighash');
 var Output = require('../output');
-var TransactionSignature = require('../signature');
 
 var MAXINT = 0xffffffff; // Math.pow(2, 32) - 1;
 var DEFAULT_RBF_SEQNUMBER = MAXINT - 2;
