@@ -2401,35 +2401,13 @@ export class WalletService {
                   next();
                 },
                 next => {
-                  // const bc = this._getBlockchainExplorer(wallet.coin, wallet.network);
-                  // this._getBlockchainHeight(wallet.coin, wallet.network, (err, height, hash) => {
-                  //   console.log('err', err);
-                  //   console.log('height', height);
-                  //   console.log('hash', hash);
-                  //   const startBlock = height;
-                  //   bc.getTransactions(wallet, height, (err, txs) => {
-                  //     console.log('err', err);
-                  //     console.log('txs', txs);
-                  //     next();
-                  //   });
-                  // })
-                  // this.storage.fetchTxs(this.walletId, {}, (err, txs) => {
-                  //   console.log('err', err);
-                  //   console.log('txs', txs);
-                  //   next();
-                  // });
-                  next();
-                },
-                next => {
                   return ChainService.selectTxInputs(this, txp, wallet, opts, next);
                 },
                 async next => {
-                  if (txp.coin !== 'bch' || !opts.instantAcceptanceEscrow) return next();
+                  if (!wallet.isZceCompatible() || !opts.instantAcceptanceEscrow) return next();
                   try {
                     opts.inputs = txp.inputs;
                     const escrowAddress = await ChainService.getChangeAddress(this, wallet, opts);
-                    logger.debug('escrowAddress');
-                    logger.debug(escrowAddress);
                     txp.escrowAddress = escrowAddress;
                   } catch (error) {
                     return next(error);
