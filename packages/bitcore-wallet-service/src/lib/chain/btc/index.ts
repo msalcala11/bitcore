@@ -879,8 +879,6 @@ export class BtcChain implements IChain {
   addressToStorageTransform(network, address) {}
 
   addSignaturesToBitcoreTx(tx, inputs, inputPaths, signatures, xpub, signingMethod) {
-    logger.debug('in addSignaturesToBitcoreTx\n\n');
-    logger.debug(signingMethod);
     signingMethod = signingMethod || 'ecdsa';
     if (signatures.length != inputs.length) throw new Error('Number of signatures does not match number of inputs');
 
@@ -899,10 +897,7 @@ export class BtcChain implements IChain {
         };
         tx.inputs[i].addSignature(tx, s, signingMethod);
         i++;
-      } catch (e) {
-        logger.debug('addSignature error');
-        logger.debug(e);
-      }
+      } catch (e) {}
     });
 
     if (i != tx.inputs.length) throw new Error('Wrong signatures');
