@@ -1,6 +1,5 @@
 import { Deriver } from 'crypto-wallet-core';
 import _ from 'lodash';
-import logger from '../logger';
 import { AddressManager } from './addressmanager';
 
 const $ = require('preconditions').singleton();
