@@ -167,29 +167,6 @@ Input.prototype.getSignatures = function() {
     ' for input: ' + JSON.stringify(this)
   );
 };
-// Input.prototype.getSignatures = function(transaction, privateKey, index, sigtype, hashData, signingMethod) {
-//   $.checkState(this.output instanceof Output);
-//   sigtype = sigtype || (Signature.SIGHASH_ALL |  Signature.SIGHASH_FORKID);
-
-//   var self = this;
-//   var results = [];
-//   const inputPublicKeys = this.publicKeys.slice(1);
-//   const reclaimPublicKey = this.publicKeys[0];
-//   const zceRedeemScript = Script.buildEscrowOut(inputPublicKeys, reclaimPublicKey);
-//   _.each(this.publicKeys, function(publicKey) {
-//     if (publicKey.toString() === privateKey.publicKey.toString()) {
-//       results.push(new TransactionSignature({
-//         publicKey: privateKey.publicKey,
-//         prevTxId: self.prevTxId,
-//         outputIndex: self.outputIndex,
-//         inputIndex: index,
-//         signature: Sighash.sign(transaction, privateKey, sigtype, index, zceRedeemScript, self.output.satoshisBN, undefined, signingMethod),
-//         sigtype: sigtype
-//       }));
-//     }
-//   });
-//   return results;
-// };
 
 Input.prototype.isFullySigned = function() {
   throw new errors.AbstractMethodInvoked('Input#isFullySigned');
