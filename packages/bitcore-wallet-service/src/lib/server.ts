@@ -2309,8 +2309,6 @@ export class WalletService {
                   if (opts.sendMax) return next();
                   try {
                     changeAddress = await ChainService.getChangeAddress(this, wallet, opts);
-                    logger.debug('first change address');
-                    logger.debug(changeAddress);
                   } catch (error) {
                     return next(error);
                   }
