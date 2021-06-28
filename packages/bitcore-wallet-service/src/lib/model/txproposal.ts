@@ -339,8 +339,7 @@ export class TxProposal {
    * @return {Number} total amount of all outputs excluding change output
    */
   getTotalAmount() {
-    // const escrow = this.instantAcceptanceEscrow ? this.instantAcceptanceEscrow.satoshis : 0;
-    return _.sumBy(this.outputs, 'amount'); // + escrow;
+    return _.sumBy(this.outputs, 'amount');
   }
 
   /**
