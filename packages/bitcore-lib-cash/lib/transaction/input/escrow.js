@@ -46,7 +46,7 @@ EscrowInput.prototype.getSignatures = function(transaction, privateKey, index, s
 };
 
 EscrowInput.prototype.addSignature = function(transaction, signature, signingMethod) {
-    // $.checkState(this.isValidSignature(transaction, signature, signingMethod));
+    $.checkState(this.isValidSignature(transaction, signature, signingMethod));
     const signatureString = signature.signature.toBuffer('schnorr').toString('hex') + '41';
     const redeemScript = this.redeemScript.toHex();
     const redeemScriptBytes = redeemScript.length / 2;
@@ -59,6 +59,23 @@ EscrowInput.prototype.addSignature = function(transaction, signature, signingMet
     this.setScript(reclaimScript);
 }
 
-EscrowInput.prototype.clearSignatures = function() {}
+EscrowInput.prototype.isValidSignature = function(transaction, signature, signingMethod) {
+  signingMethod = signingMethod || 'ecdsa';
+  signature.signature.nhashtype = signature.sigtype;
+  return Sighash.verify(
+      transaction,
+      signature.signature,
+      signature.publicKey,
+      signature.inputIndex,
+      this.redeemScript,
+      this.output.satoshisBN,
+      undefined,
+      signingMethod
+  );
+};
+
+EscrowInput.prototype.clearSignatures = function() {
+  this.signatures = new Array(1);
+};
 
 module.exports = EscrowInput;
