@@ -31,17 +31,18 @@ function EscrowInput(input, inputPublicKeys, reclaimPublicKey, signatures) {
 inherits(EscrowInput, Input);
 
 EscrowInput.prototype.getSignatures = function(transaction, privateKey, index, sigtype, hashData, signingMethod) {
-    $.checkState(this.output instanceof Output);
-    sigtype = sigtype || (Signature.SIGHASH_ALL |  Signature.SIGHASH_FORKID);
-    const signature = new TransactionSignature({
-        publicKey: privateKey.publicKey,
-        prevTxId: this.prevTxId,
-        outputIndex: this.outputIndex,
-        inputIndex: index,
-        signature: Sighash.sign(transaction, privateKey, sigtype, index, this.redeemScript, this.output.satoshisBN, undefined, signingMethod),
-        sigtype: sigtype
-    });
-    return [signature];
+  if(this.reclaimPublicKey.toString() !== privateKey.publicKey.toString()) return [];
+  $.checkState(this.output instanceof Output);
+  sigtype = sigtype || (Signature.SIGHASH_ALL |  Signature.SIGHASH_FORKID);
+  const signature = new TransactionSignature({
+      publicKey: privateKey.publicKey,
+      prevTxId: this.prevTxId,
+      outputIndex: this.outputIndex,
+      inputIndex: index,
+      signature: Sighash.sign(transaction, privateKey, sigtype, index, this.redeemScript, this.output.satoshisBN, undefined, signingMethod),
+      sigtype: sigtype
+  });
+  return [signature];
 };
 
 EscrowInput.prototype.addSignature = function(transaction, signature, signingMethod) {
