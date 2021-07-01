@@ -125,8 +125,9 @@ export class Address {
 
         if (Address.Bitcore[coin]) {
           if (escrowInputs) {
+            var xpub = new Address.Bitcore[coin].HDPublicKey(publicKeyRing[0].xPubKey);
             const inputPublicKeys = escrowInputs.map(input =>
-              Address.Bitcore[coin].PublicKey.fromString(input.publicKeys[0])
+                xpub.deriveChild(input.path).publicKey
             );
             bitcoreAddress = Address.Bitcore[coin].Address.createEscrow(inputPublicKeys, publicKeys[0], network);
             publicKeys = [publicKeys[0], ...inputPublicKeys];

@@ -164,7 +164,15 @@ export class Utils {
     return { _input, addressIndex, isChange };
   }
 
-  static deriveAddress(scriptType, publicKeyRing, path, m, network, coin) {
+  static deriveAddress(
+    scriptType,
+    publicKeyRing,
+    path,
+    m,
+    network,
+    coin,
+    escrowInputs?
+  ) {
     $.checkArgument(_.includes(_.values(Constants.SCRIPT_TYPES), scriptType));
 
     coin = coin || 'btc';
@@ -203,10 +211,23 @@ export class Utils {
           'publicKeys array undefined'
         );
         if (Constants.UTXO_COINS.includes(coin)) {
-          bitcoreAddress = bitcore.Address.fromPublicKey(
-            publicKeys[0],
-            network
-          );
+          if (escrowInputs) {
+            var xpub = new bitcore.HDPublicKey(publicKeyRing[0].xPubKey);
+            const inputPublicKeys = escrowInputs.map(
+              input => xpub.deriveChild(input.path).publicKey
+            );
+            bitcoreAddress = bitcore.Address.createEscrow(
+              inputPublicKeys,
+              publicKeys[0],
+              network
+            );
+            publicKeys = [publicKeys[0], ...inputPublicKeys];
+          } else {
+            bitcoreAddress = bitcore.Address.fromPublicKey(
+              publicKeys[0],
+              network
+            );
+          }
         } else {
           const { addressIndex, isChange } = this.parseDerivationPath(path);
           const [{ xPubKey }] = publicKeyRing;
