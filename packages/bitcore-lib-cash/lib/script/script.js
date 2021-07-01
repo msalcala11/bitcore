@@ -714,7 +714,7 @@ Script.prototype.removeCodeseparators = function() {
   $.checkArgument(inputPublicKeys.length > 0, 'Must provide at least one input public key');
   $.checkArgument(reclaimPublicKey, 'Must provide a reclaim public key');
   const hash160 = (publicKey) => Hash.sha256ripemd160(publicKey.toBuffer()).toString('hex');
-  const inputPublicKeyHashes = inputPublicKeys.map(publicKey => hash160(publicKey));
+  const inputPublicKeyHashes = inputPublicKeys.map(publicKey => hash160(publicKey)).sort();
   const reclaimPublicKeyHash = hash160(reclaimPublicKey);
   const checkAgainstFirstInputPublicKey = `OP_DUP OP_HASH160 OP_PUSHBYTES_20 0x${inputPublicKeyHashes[0]} OP_EQUAL`;
   const remainingPublicKeyHashes = inputPublicKeyHashes.slice(1);
