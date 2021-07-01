@@ -196,7 +196,24 @@ export class Utils {
         );
         break;
       case Constants.SCRIPT_TYPES.P2SH:
-        bitcoreAddress = bitcore.Address.createMultisig(publicKeys, m, network);
+        if (escrowInputs) {
+          var xpub = new bitcore.HDPublicKey(publicKeyRing[0].xPubKey);
+          const inputPublicKeys = escrowInputs.map(
+            input => xpub.deriveChild(input.path).publicKey
+          );
+          bitcoreAddress = bitcore.Address.createEscrow(
+            inputPublicKeys,
+            publicKeys[0],
+            network
+          );
+          publicKeys = [publicKeys[0], ...inputPublicKeys];
+        } else {
+          bitcoreAddress = bitcore.Address.createMultisig(
+            publicKeys,
+            m,
+            network
+          );
+        }
         break;
       case Constants.SCRIPT_TYPES.P2WPKH:
         bitcoreAddress = bitcore.Address.fromPublicKey(
@@ -211,23 +228,10 @@ export class Utils {
           'publicKeys array undefined'
         );
         if (Constants.UTXO_COINS.includes(coin)) {
-          if (escrowInputs) {
-            var xpub = new bitcore.HDPublicKey(publicKeyRing[0].xPubKey);
-            const inputPublicKeys = escrowInputs.map(
-              input => xpub.deriveChild(input.path).publicKey
-            );
-            bitcoreAddress = bitcore.Address.createEscrow(
-              inputPublicKeys,
-              publicKeys[0],
-              network
-            );
-            publicKeys = [publicKeys[0], ...inputPublicKeys];
-          } else {
-            bitcoreAddress = bitcore.Address.fromPublicKey(
-              publicKeys[0],
-              network
-            );
-          }
+          bitcoreAddress = bitcore.Address.fromPublicKey(
+            publicKeys[0],
+            network
+          );
         } else {
           const { addressIndex, isChange } = this.parseDerivationPath(path);
           const [{ xPubKey }] = publicKeyRing;

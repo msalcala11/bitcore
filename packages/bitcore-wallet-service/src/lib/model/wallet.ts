@@ -264,9 +264,10 @@ export class Wallet {
 
     const path = this.addressManager.getNewAddressPath(isChange, step);
     logger.debug('Deriving addr:' + path);
+    const scriptType = escrowInputs ? 'P2SH' : this.addressType;
     const address = Address.derive(
       this.id,
-      this.addressType,
+      scriptType,
       this.publicKeyRing,
       path,
       this.m,
