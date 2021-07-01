@@ -528,7 +528,7 @@ export class BtcChain implements IChain {
 
     const feeOpts = {
       conservativeEstimation: opts.payProUrl ? true : false,
-      instantAcceptanceEscrow: opts.instantAcceptanceEscrow || 'not set'
+      instantAcceptanceEscrow: opts.instantAcceptanceEscrow
     };
     const escrowAmount = opts.instantAcceptanceEscrow ? opts.instantAcceptanceEscrow.satoshis : 0;
     const txpAmount = txp.getTotalAmount() + escrowAmount;
