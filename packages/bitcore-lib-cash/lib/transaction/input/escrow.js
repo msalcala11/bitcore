@@ -52,6 +52,7 @@ EscrowInput.prototype.addSignature = function(transaction, signature, signingMet
       .replace(new RegExp('OP_PUSHBYTES_', 'g'), '')
       .replace(new RegExp('PUSHDATA_1', 'g'), 'PUSHDATA1');
   this.setScript(reclaimScript);
+  this.signatures = [signature];
 }
 
 EscrowInput.prototype.isValidSignature = function(transaction, signature, signingMethod) {
@@ -72,6 +73,10 @@ EscrowInput.prototype.isValidSignature = function(transaction, signature, signin
 EscrowInput.prototype.clearSignatures = function() {
   this.signatures = [];
 };
+
+EscrowInput.prototype.isFullySigned = function() {
+  return this.signatures.length === 1;
+}
 
 EscrowInput.prototype._deserializeSignatures = function(signatures) {
   return signatures.map(signature => new TransactionSignature(signature));

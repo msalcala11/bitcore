@@ -2071,11 +2071,12 @@ export class API extends EventEmitter {
           const chain = Utils.getChain(txp.coin);
           const currency = txp.coin.toUpperCase();
           const rawTxUnsigned = t_unsigned.uncheckedSerialize();
-          const serializedTx = t.serialize({
+          const serializationOpts = {
             disableSmallFees: true,
             disableLargeFees: true,
             disableDustOutputs: true
-          });
+          };
+          const serializedTx = t.serialize(serializationOpts);
           const unsignedTransactions = [];
           const signedTransactions = [];
 
@@ -2084,6 +2085,16 @@ export class API extends EventEmitter {
             typeof rawTxUnsigned === 'string' ? [rawTxUnsigned] : rawTxUnsigned;
           const serializedTxs =
             typeof serializedTx === 'string' ? [serializedTx] : serializedTx;
+
+          if (txp.escrowReclaimTxp) {
+            var unsignedReclaimTx = Utils.buildTx(txp.escrowReclaimTxp);
+            var reclaimTx = _.cloneDeep(unsignedReclaimTx);
+            this._applyAllSignatures(txp.escrowReclaimTxp, reclaimTx);
+            var rawUnsignedReclaimTx = unsignedReclaimTx.uncheckedSerialize();
+            var rawSignedReclaimTx = reclaimTx.serialize(serializationOpts);
+          }
+          var unsignedReclaimTransactions = [rawUnsignedReclaimTx];
+          var signedReclaimTransactions = [rawSignedReclaimTx];
 
           const weightedSize = [];
 
@@ -2102,7 +2113,8 @@ export class API extends EventEmitter {
             }
             unsignedTransactions.push({
               tx: unsigned,
-              weightedSize: size
+              weightedSize: size,
+              escrowReclaimTx: unsignedReclaimTransactions[i]
             });
             weightedSize.push(size);
 
@@ -2112,8 +2124,10 @@ export class API extends EventEmitter {
           for (const signed of serializedTxs) {
             signedTransactions.push({
               tx: signed,
-              weightedSize: weightedSize[i++]
+              weightedSize: weightedSize[i],
+              escrowReclaimTx: signedReclaimTransactions[i]
             });
+            i++;
           }
           PayProV2.verifyUnsignedPayment({
             paymentUrl: txp.payProUrl,
