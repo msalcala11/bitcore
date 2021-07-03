@@ -2087,14 +2087,14 @@ export class API extends EventEmitter {
             typeof serializedTx === 'string' ? [serializedTx] : serializedTx;
 
           if (txp.escrowReclaimTxp) {
-            var unsignedReclaimTx = Utils.buildTx(txp.escrowReclaimTxp);
-            var reclaimTx = _.cloneDeep(unsignedReclaimTx);
+            const unsignedReclaimTx = Utils.buildTx(txp.escrowReclaimTxp);
+            const reclaimTx = _.cloneDeep(unsignedReclaimTx);
             this._applyAllSignatures(txp.escrowReclaimTxp, reclaimTx);
             var rawUnsignedReclaimTx = unsignedReclaimTx.uncheckedSerialize();
             var rawSignedReclaimTx = reclaimTx.serialize(serializationOpts);
           }
-          var unsignedReclaimTransactions = [rawUnsignedReclaimTx];
-          var signedReclaimTransactions = [rawSignedReclaimTx];
+          const unsignedReclaimTransactions = [rawUnsignedReclaimTx];
+          const signedReclaimTransactions = [rawSignedReclaimTx];
 
           const weightedSize = [];
 
