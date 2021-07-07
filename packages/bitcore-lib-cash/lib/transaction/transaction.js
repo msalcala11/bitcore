@@ -1265,7 +1265,8 @@ Transaction.prototype.isZceProtected = function(escrowReclaimTx, requiredEscrowS
     return false;
   }
 
-  const escrowInput = reclaimTx.inputs[0];
+  const escrowInputIndex = 0;
+  const escrowInput = reclaimTx.inputs[escrowInputIndex];
 
   if (escrowInput.prevTxId.toString('hex') !== this.id) {
     return false;
@@ -1287,17 +1288,18 @@ Transaction.prototype.isZceProtected = function(escrowReclaimTx, requiredEscrowS
   }
 
   const inputPublicKeys = this.inputs.map(input => new PublicKey(input.script.getPublicKey()));
-  const reclaimPublicKey = new PublicKey(escrowInput.script.toASM().split(' ')[1]);
+
+  const escrowUnlockingScriptParts = escrowInput.script.toASM().split(' ');
+  if (escrowUnlockingScriptParts.length !== 3) {
+    return false;
+  }
+  const [reclaimSignatureString, reclaimPublicKeyString, redeemScriptString] = escrowUnlockingScriptParts;
+  const reclaimPublicKey = new PublicKey(reclaimPublicKeyString);
   const correctEscrowRedeemScript = Script.buildEscrowOut(inputPublicKeys, reclaimPublicKey);
   const correctEscrowRedeemScriptHash = Hash.sha256ripemd160(correctEscrowRedeemScript.toBuffer());
 
   const escrowUtxoRedeemScriptHash = escrowUtxo.script.getData();
-  const escrowInputRedeemScript = new Script(
-    escrowInput.script
-      .toASM()
-      .split(' ')
-      .slice(-1)[0]
-  );
+  const escrowInputRedeemScript = new Script(redeemScriptString);
   const escrowInputRedeemScriptHash = Hash.sha256ripemd160(escrowInputRedeemScript.toBuffer());
 
   const allRedeemScriptHashes = [
@@ -1310,8 +1312,21 @@ Transaction.prototype.isZceProtected = function(escrowReclaimTx, requiredEscrowS
     return false;
   }
 
-  console.log('inputPublicKeys', inputPublicKeys);
-  // reclaimTx.verifySignature()
+  const reclaimSignature = Signature.fromString(reclaimSignatureString);
+  reclaimSignature.set({ nhashtype: 0x41 });
+  const reclaimSigValid = reclaimTx.verifySignature(
+    reclaimSignature,
+    reclaimPublicKey,
+    escrowInputIndex,
+    escrowInputRedeemScript,
+    escrowUtxo.satoshisBN,
+    undefined,
+    'schnorr'
+  );
+
+  if (!reclaimSigValid) {
+    return false;
+  }
 
   return true;
 };
