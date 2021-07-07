@@ -1257,15 +1257,13 @@ Transaction.prototype.verify = function() {
 };
 
 Transaction.prototype.isZceProtected = function(escrowReclaimTx, requiredEscrowSatoshis, requiredFeeRate) {
-  const reclaimTx = new Transaction(escrowReclaimTx);
-
   const allInputsAreP2pkh = this.inputs.every(input => input.script.isPublicKeyHashIn());
-
   if (!allInputsAreP2pkh) {
     return false;
   }
-
+  
   const escrowInputIndex = 0;
+  const reclaimTx = new Transaction(escrowReclaimTx);
   const escrowInput = reclaimTx.inputs[escrowInputIndex];
 
   if (escrowInput.prevTxId.toString('hex') !== this.id) {
@@ -1287,14 +1285,13 @@ Transaction.prototype.isZceProtected = function(escrowReclaimTx, requiredEscrowS
     return false;
   }
 
-  const inputPublicKeys = this.inputs.map(input => new PublicKey(input.script.getPublicKey()));
-
   const escrowUnlockingScriptParts = escrowInput.script.toASM().split(' ');
   if (escrowUnlockingScriptParts.length !== 3) {
     return false;
   }
   const [reclaimSignatureString, reclaimPublicKeyString, redeemScriptString] = escrowUnlockingScriptParts;
   const reclaimPublicKey = new PublicKey(reclaimPublicKeyString);
+  const inputPublicKeys = this.inputs.map(input => new PublicKey(input.script.getPublicKey()));
   const correctEscrowRedeemScript = Script.buildEscrowOut(inputPublicKeys, reclaimPublicKey);
   const correctEscrowRedeemScriptHash = Hash.sha256ripemd160(correctEscrowRedeemScript.toBuffer());
 
@@ -1314,6 +1311,7 @@ Transaction.prototype.isZceProtected = function(escrowReclaimTx, requiredEscrowS
 
   const reclaimSignature = Signature.fromString(reclaimSignatureString);
   reclaimSignature.nhashtype = 0x41;
+  
   const reclaimSigValid = reclaimTx.verifySignature(
     reclaimSignature,
     reclaimPublicKey,
