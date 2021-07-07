@@ -1287,15 +1287,26 @@ Transaction.prototype.isZceProtected = function(escrowReclaimTx, requiredEscrowS
   }
 
   const inputPublicKeys = this.inputs.map(input => new PublicKey(input.script.getPublicKey()));
-
   const reclaimPublicKey = new PublicKey(escrowInput.script.toASM().split(' ')[1]);
-
-  const escrowRedeemScript = Script.buildEscrowOut(inputPublicKeys, reclaimPublicKey);
-  const escrowRedeemScriptHash = Hash.sha256ripemd160(escrowRedeemScript.toBuffer());
+  const correctEscrowRedeemScript = Script.buildEscrowOut(inputPublicKeys, reclaimPublicKey);
+  const correctEscrowRedeemScriptHash = Hash.sha256ripemd160(correctEscrowRedeemScript.toBuffer());
 
   const escrowUtxoRedeemScriptHash = escrowUtxo.script.getData();
+  const escrowInputRedeemScript = new Script(
+    escrowInput.script
+      .toASM()
+      .split(' ')
+      .slice(-1)[0]
+  );
+  const escrowInputRedeemScriptHash = Hash.sha256ripemd160(escrowInputRedeemScript.toBuffer());
 
-  if (escrowUtxoRedeemScriptHash.toString('hex') !== escrowRedeemScriptHash.toString('hex')) {
+  const allRedeemScriptHashes = [
+    correctEscrowRedeemScriptHash,
+    escrowInputRedeemScriptHash,
+    escrowUtxoRedeemScriptHash
+  ].map(hash => hash.toString('hex'));
+
+  if (!allRedeemScriptHashes.every(hash => hash === allRedeemScriptHashes[0])) {
     return false;
   }
 
