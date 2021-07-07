@@ -1313,7 +1313,7 @@ Transaction.prototype.isZceProtected = function(escrowReclaimTx, requiredEscrowS
   }
 
   const reclaimSignature = Signature.fromString(reclaimSignatureString);
-  reclaimSignature.set({ nhashtype: 0x41 });
+  reclaimSignature.nhashtype = 0x41;
   const reclaimSigValid = reclaimTx.verifySignature(
     reclaimSignature,
     reclaimPublicKey,
@@ -1321,7 +1321,7 @@ Transaction.prototype.isZceProtected = function(escrowReclaimTx, requiredEscrowS
     escrowInputRedeemScript,
     escrowUtxo.satoshisBN,
     undefined,
-    'schnorr'
+    reclaimSignature.isSchnorr ? 'schnorr' : 'ecdsa'
   );
 
   if (!reclaimSigValid) {
