@@ -342,8 +342,8 @@ Script.prototype.isPublicKeyHashIn = function() {
 };
 
 Script.prototype.getPublicKey = function() {
-  $.checkState(this.isPublicKeyOut(), "Can't retrieve PublicKey from a non-PK output");
-  return this.chunks[0].buf;
+  $.checkState(this.isPublicKeyOut() || this.isPublicKeyHashIn(), "Can't retrieve PublicKey from a non-PK output or non-PKH input");
+  return this.isPublicKeyOut() ? this.chunks[0].buf : this.chunks[1].buf;
 };
 
 Script.prototype.getPublicKeyHash = function() {

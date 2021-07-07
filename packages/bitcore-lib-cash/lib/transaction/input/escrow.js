@@ -82,4 +82,18 @@ EscrowInput.prototype._deserializeSignatures = function(signatures) {
   return signatures.map(signature => new TransactionSignature(signature));
 };
 
+// EscrowInput.fromScript = function(input, unlockingScript) {
+
+//   const unlockingScriptAsm = new Script(unlockingScript).toASM();
+//   const redeemScript = unlockingScriptAsm.split(' ').slice(-1);
+
+//   const redeemScriptString = new Script(redeemScript).toString();
+
+//   const singleInputTemplate = `OP_DUP OP_HASH160 OP_PUSHBYTES_20 {reclaimPublicKeyHash} OP_EQUAL OP_IF OP_CHECKSIG OP_ELSE OP_DUP OP_HASH160 OP_PUSHBYTES_20 {inputPublicKeyHash1} OP_EQUAL OP_IF OP_OVER OP_4 OP_PICK OP_EQUAL OP_NOT OP_VERIFY OP_DUP OP_TOALTSTACK OP_CHECKDATASIGVERIFY OP_FROMALTSTACK OP_CHECKDATASIG OP_ELSE OP_RETURN OP_ENDIF OP_ENDIF`.replace(
+//     new RegExp('OP_PUSHBYTES_', 'g'),
+//     ''
+//   )
+
+// };
+
 module.exports = EscrowInput;

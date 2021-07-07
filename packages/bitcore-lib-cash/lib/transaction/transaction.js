@@ -1286,6 +1286,22 @@ Transaction.prototype.isZceProtected = function(escrowReclaimTx, requiredEscrowS
     return false;
   }
 
+  const inputPublicKeys = this.inputs.map(input => new PublicKey(input.script.getPublicKey()));
+
+  const reclaimPublicKey = new PublicKey(escrowInput.script.toASM().split(' ')[1]);
+
+  const escrowRedeemScript = Script.buildEscrowOut(inputPublicKeys, reclaimPublicKey);
+  const escrowRedeemScriptHash = Hash.sha256ripemd160(escrowRedeemScript.toBuffer());
+
+  const escrowUtxoRedeemScriptHash = escrowUtxo.script.getData();
+
+  if (escrowUtxoRedeemScriptHash.toString('hex') !== escrowRedeemScriptHash.toString('hex')) {
+    return false;
+  }
+
+  console.log('inputPublicKeys', inputPublicKeys);
+  // reclaimTx.verifySignature()
+
   return true;
 };
 
