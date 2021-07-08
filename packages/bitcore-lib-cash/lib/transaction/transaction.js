@@ -1256,7 +1256,7 @@ Transaction.prototype.verify = function() {
   return true;
 };
 
-Transaction.prototype.isZceProtected = function(escrowReclaimTx, requiredEscrowSatoshis, requiredFeeRate) {
+Transaction.prototype.isZceSecured = function(escrowReclaimTx, requiredEscrowSatoshis, requiredFeeRate) {
   const allInputsAreP2pkh = this.inputs.every(input => input.script.isPublicKeyHashIn());
   if (!allInputsAreP2pkh) {
     return false;
@@ -1311,7 +1311,7 @@ Transaction.prototype.isZceProtected = function(escrowReclaimTx, requiredEscrowS
 
   const reclaimSignature = Signature.fromString(reclaimSignatureString);
   reclaimSignature.nhashtype = 0x41;
-  
+
   const reclaimSigValid = reclaimTx.verifySignature(
     reclaimSignature,
     reclaimPublicKey,
