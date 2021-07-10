@@ -384,7 +384,7 @@ export class BtcChain implements IChain {
     });
 
     if (txp.instantAcceptanceEscrow && txp.escrowAddress) {
-      t.to(txp.escrowAddress.address, txp.instantAcceptanceEscrow.satoshis);
+      t.to(txp.escrowAddress.address, txp.instantAcceptanceEscrow);
     }
 
     t.fee(txp.fee);
@@ -530,7 +530,7 @@ export class BtcChain implements IChain {
       conservativeEstimation: opts.payProUrl ? true : false,
       instantAcceptanceEscrow: opts.instantAcceptanceEscrow
     };
-    const escrowAmount = opts.instantAcceptanceEscrow ? opts.instantAcceptanceEscrow.satoshis : 0;
+    const escrowAmount = opts.instantAcceptanceEscrow || 0;
     const txpAmount = txp.getTotalAmount() + escrowAmount;
     const baseTxpSize = this.getEstimatedSize(txp, feeOpts);
     const baseTxpFee = (baseTxpSize * txp.feePerKb) / 1000;
