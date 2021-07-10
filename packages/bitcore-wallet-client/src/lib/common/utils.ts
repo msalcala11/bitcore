@@ -386,7 +386,7 @@ export class Utils {
       }
 
       if (txp.instantAcceptanceEscrow && txp.escrowAddress) {
-        t.to(txp.escrowAddress.address, txp.instantAcceptanceEscrow.satoshis);
+        t.to(txp.escrowAddress.address, txp.instantAcceptanceEscrow);
       }
 
       t.fee(txp.fee);
