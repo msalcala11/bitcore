@@ -32,7 +32,7 @@ describe('Escrow', function() {
       ];
       const publicKeys = publicKeyStrings.map(publicKeyString => PublicKey.fromString(publicKeyString));
       const merkleRoot = Escrow.generateMerkleRootFromPublicKeys(publicKeys);
-      merkleRoot.toString('hex').should.equal('7f9a56485f322521d8194eebda9c63ceb079f7f1');
+      merkleRoot.toString('hex').should.equal('8001321ef1822edc229a5387b181d6f8d18515cc');
     });
   });
 });

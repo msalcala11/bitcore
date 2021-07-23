@@ -9,11 +9,7 @@ Escrow.getMerkleRoot = function getMerkleRoot(hashes) {
   if (hashes.length === 1) {
     return hashes[0];
   }
-  const parentHashes = _.chunk(hashes, 2).map(hashPair => {
-    // swapping the order of the hashes allows us to not need an OP_NOT in the bitcoin script
-    // for each level of the merkle tree.
-    return Hash.sha256ripemd160(new Buffer.concat([hashPair[1], hashPair[0]]));
-  });
+  const parentHashes = _.chunk(hashes, 2).map(hashPair => Hash.sha256ripemd160(new Buffer.concat(hashPair)));
   return getMerkleRoot(parentHashes);
 };
 
@@ -25,9 +21,7 @@ Escrow.generateMerkleRootFromPublicKeys = function(publicKeys) {
     .sort()
     .map(publicKeyString => PublicKey.fromString(publicKeyString).toBuffer());
   const zeros = Array(numItems - publicKeys.length).fill(Buffer.from('0', 'hex'));
-  const leaves = sortedPublicKeys.concat(zeros).map(value => {
-    return Hash.sha256ripemd160(value);
-  });
+  const leaves = sortedPublicKeys.concat(zeros).map(value => Hash.sha256ripemd160(value));
   const merkleRoot = Escrow.getMerkleRoot(leaves);
   return merkleRoot;
 };
