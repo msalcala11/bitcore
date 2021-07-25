@@ -9,7 +9,7 @@ var Escrow = {};
 
 var bufferFromNumber = function(n) {
   const hexString = n.toString(16);
-  const fullHexString = `${hexString.length === 1 ? '0' : ''}${hexString}`;
+  const fullHexString = `${hexString.length === 1 && n > 0 ? '0' : ''}${hexString}`;
   return Buffer.from(fullHexString, 'hex');
 };
 
@@ -44,7 +44,7 @@ var generateSingleInputPublicKeyValidationScript = function(inputPublicKey) {
   script.add(Opcode.OP_HASH160);
   script.add(inputPublicKeyHash);
   script.add(Opcode.OP_EQUALVERIFY);
-  return script.toString();
+  return script;
 };
 
 var generateListBasedInputPublicKeyValidationScript = function(inputPublicKeys) {
@@ -63,7 +63,7 @@ var generateListBasedInputPublicKeyValidationScript = function(inputPublicKeys) 
   script.add(Opcode.OP_ROLL);
   script.add(Opcode.OP_EQUALVERIFY);
   script.add(dropOpCode);
-  return script.toString();
+  return script;
 };
 
 var generateMerkleBasedInputPublicKeyValidationScript = function(inputPublicKeys) {
@@ -96,8 +96,7 @@ var generateMerkleBasedInputPublicKeyValidationScript = function(inputPublicKeys
   return hashPubKey
     .add(proveRoot)
     .add(rootHash)
-    .add(Opcode.OP_EQUALVERIFY)
-    .toString();
+    .add(Opcode.OP_EQUALVERIFY);
 };
 
 Escrow.generateInputPublicKeyValidationScript = function(inputPublicKeys) {

@@ -13,7 +13,6 @@ var PrivateKey = bitcore.PrivateKey;
 var PublicKey = bitcore.PublicKey;
 // var Address = bitcore.Address;
 var Escrow = require('../../lib/script/escrow');
-console.log('escrowwwwww', Escrow);
 
 describe.only('Escrow', function() {
   describe('#getMerkleRoot', () => {
@@ -39,7 +38,7 @@ describe.only('Escrow', function() {
     it('should work for a single input public key', () => {
       const publicKey = PublicKey.fromString('03fb0ed01700a2e9303f76ec93c61114507d9ea9bb3704c873fa8c1c7f4fad0a49');
       const script = Escrow.generateInputPublicKeyValidationScript([publicKey]);
-      script.should.equal(`OP_DUP OP_HASH160 20 0x2a42558df3ea6f2a438251374d7bd61c81f09f96 OP_EQUALVERIFY`);
+      script.toString().should.equal(`OP_DUP OP_HASH160 20 0x2a42558df3ea6f2a438251374d7bd61c81f09f96 OP_EQUALVERIFY`);
     });
     it('should work for two input public keys', () => {
       const publicKeyStrings = [
@@ -48,9 +47,11 @@ describe.only('Escrow', function() {
       ];
       const publicKeys = publicKeyStrings.map(publicKeyString => PublicKey.fromString(publicKeyString));
       const script = Escrow.generateInputPublicKeyValidationScript(publicKeys);
-      script.should.equal(
-        `OP_TOALTSTACK OP_DUP OP_HASH160 20 0xc5dd558db027f1e6efd37556d26d020a637303d6 20 0x5b4f8e5efc268d9c6d3d73d6993a795be259873f OP_FROMALTSTACK OP_ROLL 1 0x02 OP_ROLL OP_EQUALVERIFY OP_DROP`
-      );
+      script
+        .toString()
+        .should.equal(
+          `OP_TOALTSTACK OP_DUP OP_HASH160 20 0xc5dd558db027f1e6efd37556d26d020a637303d6 20 0x5b4f8e5efc268d9c6d3d73d6993a795be259873f OP_FROMALTSTACK OP_ROLL 1 0x02 OP_ROLL OP_EQUALVERIFY OP_DROP`
+        );
     });
     it('should work for three input public keys', () => {
       const publicKeyStrings = [
@@ -60,9 +61,11 @@ describe.only('Escrow', function() {
       ];
       const publicKeys = publicKeyStrings.map(publicKeyString => PublicKey.fromString(publicKeyString));
       const script = Escrow.generateInputPublicKeyValidationScript(publicKeys);
-      script.should.equal(
-        `OP_TOALTSTACK OP_DUP OP_HASH160 20 0x2a42558df3ea6f2a438251374d7bd61c81f09f96 20 0xc5dd558db027f1e6efd37556d26d020a637303d6 20 0x5b4f8e5efc268d9c6d3d73d6993a795be259873f OP_FROMALTSTACK OP_ROLL 1 0x03 OP_ROLL OP_EQUALVERIFY OP_2DROP`
-      );
+      script
+        .toString()
+        .should.equal(
+          `OP_TOALTSTACK OP_DUP OP_HASH160 20 0x2a42558df3ea6f2a438251374d7bd61c81f09f96 20 0xc5dd558db027f1e6efd37556d26d020a637303d6 20 0x5b4f8e5efc268d9c6d3d73d6993a795be259873f OP_FROMALTSTACK OP_ROLL 1 0x03 OP_ROLL OP_EQUALVERIFY OP_2DROP`
+        );
     });
     it('should work for four input public keys', () => {
       const publicKeyStrings = [
@@ -73,9 +76,11 @@ describe.only('Escrow', function() {
       ];
       const publicKeys = publicKeyStrings.map(publicKeyString => PublicKey.fromString(publicKeyString));
       const script = Escrow.generateInputPublicKeyValidationScript(publicKeys);
-      script.should.equal(
-        `1 0x03 OP_PICK OP_HASH160 1 0x03 OP_PICK 1 0x02 OP_MOD OP_NOTIF OP_SWAP OP_ENDIF OP_CAT OP_HASH160 1 0x02 OP_ROLL 1 0x02 OP_DIV 1 0x02 OP_MOD OP_NOTIF OP_SWAP OP_ENDIF OP_CAT OP_HASH160 20 0x13b0df96f790ce4188d3d6c30e75518e646d9d23 OP_EQUALVERIFY`
-      );
+      script
+        .toString()
+        .should.equal(
+          `1 0x03 OP_PICK OP_HASH160 1 0x03 OP_PICK 1 0x02 OP_MOD OP_NOTIF OP_SWAP OP_ENDIF OP_CAT OP_HASH160 1 0x02 OP_ROLL 1 0x02 OP_DIV 1 0x02 OP_MOD OP_NOTIF OP_SWAP OP_ENDIF OP_CAT OP_HASH160 20 0x13b0df96f790ce4188d3d6c30e75518e646d9d23 OP_EQUALVERIFY`
+        );
     });
     it('should work for five input public keys', () => {
       const publicKeyStrings = [
@@ -87,9 +92,11 @@ describe.only('Escrow', function() {
       ];
       const publicKeys = publicKeyStrings.map(publicKeyString => PublicKey.fromString(publicKeyString));
       const script = Escrow.generateInputPublicKeyValidationScript(publicKeys);
-      script.should.equal(
-        `1 0x04 OP_PICK OP_HASH160 1 0x04 OP_PICK 1 0x02 OP_MOD OP_NOTIF OP_SWAP OP_ENDIF OP_CAT OP_HASH160 1 0x03 OP_PICK 1 0x02 OP_DIV 1 0x02 OP_MOD OP_NOTIF OP_SWAP OP_ENDIF OP_CAT OP_HASH160 1 0x02 OP_ROLL 1 0x04 OP_DIV 1 0x02 OP_MOD OP_NOTIF OP_SWAP OP_ENDIF OP_CAT OP_HASH160 20 0x82a74acda5701d011090ad0039f2aa25a8724c85 OP_EQUALVERIFY`
-      );
+      script
+        .toString()
+        .should.equal(
+          `1 0x04 OP_PICK OP_HASH160 1 0x04 OP_PICK 1 0x02 OP_MOD OP_NOTIF OP_SWAP OP_ENDIF OP_CAT OP_HASH160 1 0x03 OP_PICK 1 0x02 OP_DIV 1 0x02 OP_MOD OP_NOTIF OP_SWAP OP_ENDIF OP_CAT OP_HASH160 1 0x02 OP_ROLL 1 0x04 OP_DIV 1 0x02 OP_MOD OP_NOTIF OP_SWAP OP_ENDIF OP_CAT OP_HASH160 20 0x82a74acda5701d011090ad0039f2aa25a8724c85 OP_EQUALVERIFY`
+        );
     });
     it('should work for nine public keys', () => {
       // const publicKeyStrings = Array(9)
@@ -110,9 +117,11 @@ describe.only('Escrow', function() {
       ];
       const publicKeys = publicKeyStrings.map(publicKeyString => PublicKey.fromString(publicKeyString));
       const script = Escrow.generateInputPublicKeyValidationScript(publicKeys);
-      script.should.equal(
-        `1 0x05 OP_PICK OP_HASH160 1 0x05 OP_PICK 1 0x02 OP_MOD OP_NOTIF OP_SWAP OP_ENDIF OP_CAT OP_HASH160 1 0x04 OP_PICK 1 0x02 OP_DIV 1 0x02 OP_MOD OP_NOTIF OP_SWAP OP_ENDIF OP_CAT OP_HASH160 1 0x03 OP_PICK 1 0x04 OP_DIV 1 0x02 OP_MOD OP_NOTIF OP_SWAP OP_ENDIF OP_CAT OP_HASH160 1 0x02 OP_ROLL 1 0x08 OP_DIV 1 0x02 OP_MOD OP_NOTIF OP_SWAP OP_ENDIF OP_CAT OP_HASH160 20 0xa047442c13494553dbf18c98132605b0b708c71d OP_EQUALVERIFY`
-      );
+      script
+        .toString()
+        .should.equal(
+          `1 0x05 OP_PICK OP_HASH160 1 0x05 OP_PICK 1 0x02 OP_MOD OP_NOTIF OP_SWAP OP_ENDIF OP_CAT OP_HASH160 1 0x04 OP_PICK 1 0x02 OP_DIV 1 0x02 OP_MOD OP_NOTIF OP_SWAP OP_ENDIF OP_CAT OP_HASH160 1 0x03 OP_PICK 1 0x04 OP_DIV 1 0x02 OP_MOD OP_NOTIF OP_SWAP OP_ENDIF OP_CAT OP_HASH160 1 0x02 OP_ROLL 1 0x08 OP_DIV 1 0x02 OP_MOD OP_NOTIF OP_SWAP OP_ENDIF OP_CAT OP_HASH160 20 0xa047442c13494553dbf18c98132605b0b708c71d OP_EQUALVERIFY`
+        );
     });
   });
 });
