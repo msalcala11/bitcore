@@ -67,21 +67,37 @@ var generateListBasedInputPublicKeyValidationScript = function(inputPublicKeys) 
 };
 
 var generateMerkleBasedInputPublicKeyValidationScript = function(inputPublicKeys) {
-  const numLevels = getNumMerkleLevels(publicKeys.length);
+  const numLevels = getNumMerkleLevels(inputPublicKeys.length);
   const rootHash = Escrow.generateMerkleRootFromPublicKeys(inputPublicKeys);
-  const pubKeyHash = `<${numLevels}> OP_PICK OP_HASH160`;
-  const rootProof = Array(numLevels)
-    .map((_, index) => {
-      const leafIndexStackDepth = numLevels - index;
-      const leafIndexOpCode = index === numLevels - 1 ? 'OP_ROLL' : 'OP_PICK';
-      const getLeafIndex = `<${leafIndexStackDepth}> ${leafIndexOpCode}`;
-      const getParentIndex = index === 0 ? '' : `<${index * 2}> OP_DIV`;
-      const swapItems = `<2> OP_MOD OP_NOTIF OP_SWAP OP_ENDIF`;
-      const hashItems = `OP_CAT OP_HASH160`;
-      return `${getLeafIndex} ${getParentIndex} ${swapItems} ${hashItems}`;
-    })
-    .join(' ');
-  return `${pubKeyHash} ${rootProof} ${rootHash} OP_EQUALVERIFY`;
+  const hashPubKey = new Script();
+  hashPubKey.add(bufferFromNumber(numLevels + 1));
+  hashPubKey.add(Opcode.OP_PICK);
+  hashPubKey.add(Opcode.OP_HASH160);
+  const proveRoot = new Script();
+  Array(numLevels)
+    .fill(0)
+    .forEach((_, index) => {
+      const leafIndexStackDepth = numLevels + 1 - index;
+      const leafIndexOpCode = index === numLevels - 1 ? Opcode.OP_ROLL : Opcode.OP_PICK;
+      proveRoot.add(bufferFromNumber(leafIndexStackDepth));
+      proveRoot.add(leafIndexOpCode);
+      if (index > 0) {
+        proveRoot.add(bufferFromNumber(Math.pow(2, index)));
+        proveRoot.add(Opcode.OP_DIV);
+      }
+      proveRoot.add(bufferFromNumber(2));
+      proveRoot.add(Opcode.OP_MOD);
+      proveRoot.add(Opcode.OP_NOTIF);
+      proveRoot.add(Opcode.OP_SWAP);
+      proveRoot.add(Opcode.OP_ENDIF);
+      proveRoot.add(Opcode.OP_CAT);
+      proveRoot.add(Opcode.OP_HASH160);
+    });
+  return hashPubKey
+    .add(proveRoot)
+    .add(rootHash)
+    .add(Opcode.OP_EQUALVERIFY)
+    .toString();
 };
 
 Escrow.generateInputPublicKeyValidationScript = function(inputPublicKeys) {
