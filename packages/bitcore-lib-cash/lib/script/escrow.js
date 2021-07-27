@@ -31,7 +31,7 @@ Escrow.generateMerkleRootFromPublicKeys = function(publicKeys) {
     .map(publicKey => publicKey.toString('hex'))
     .sort()
     .map(publicKeyString => PublicKey.fromString(publicKeyString).toBuffer());
-  const zeros = Array(numItems - publicKeys.length).fill(Buffer.from('0', 'hex'));
+  const zeros = Array(numItems - publicKeys.length).fill(bufferFromNumber(0));
   const leaves = sortedPublicKeys.concat(zeros).map(value => Hash.sha256ripemd160(value));
   return Escrow.getMerkleRoot(leaves);
 };
