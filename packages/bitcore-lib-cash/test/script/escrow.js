@@ -9,7 +9,7 @@ var Hash = bitcore.crypto.Hash;
 var Script = bitcore.Script;
 // var Networks = bitcore.Networks;
 // var Opcode = bitcore.Opcode;
-var PrivateKey = bitcore.PrivateKey;
+// var PrivateKey = bitcore.PrivateKey;
 var PublicKey = bitcore.PublicKey;
 // var Address = bitcore.Address;
 var Escrow = require('../../lib/script/escrow');
@@ -119,6 +119,18 @@ describe.only('Escrow', function() {
       checkScriptOperations(
         Escrow.generateInputPublicKeyValidationOperations(publicKeys),
         `1 0x05 OP_PICK OP_HASH160 1 0x05 OP_PICK 1 0x02 OP_MOD OP_NOTIF OP_SWAP OP_ENDIF OP_CAT OP_HASH160 1 0x04 OP_PICK 1 0x02 OP_DIV 1 0x02 OP_MOD OP_NOTIF OP_SWAP OP_ENDIF OP_CAT OP_HASH160 1 0x03 OP_PICK 1 0x04 OP_DIV 1 0x02 OP_MOD OP_NOTIF OP_SWAP OP_ENDIF OP_CAT OP_HASH160 1 0x02 OP_ROLL 1 0x08 OP_DIV 1 0x02 OP_MOD OP_NOTIF OP_SWAP OP_ENDIF OP_CAT OP_HASH160 20 0xa047442c13494553dbf18c98132605b0b708c71d OP_EQUALVERIFY`
+      );
+    });
+  });
+  describe('#generateRedeemScriptOperations', () => {
+    it('should work for a single input public key', () => {
+      const inputPublicKey = PublicKey.fromString('03fb0ed01700a2e9303f76ec93c61114507d9ea9bb3704c873fa8c1c7f4fad0a49');
+      const redeemPublicKey = PublicKey.fromString(
+        '03e1d90a373b55b97fb633868698b2368b343a96b595fdb7ec270be2d3978c754a'
+      );
+      checkScriptOperations(
+        Escrow.generateRedeemScriptOperations([inputPublicKey], redeemPublicKey),
+        `OP_DUP OP_HASH160 20 0x98c24d8118bbb6b0baaa5926f441978fca0aea36 OP_EQUAL OP_IF OP_CHECKSIG OP_ELSE OP_DUP OP_HASH160 20 0x2a42558df3ea6f2a438251374d7bd61c81f09f96 OP_EQUALVERIFY OP_OVER 1 0x04 OP_PICK OP_EQUAL OP_NOT OP_VERIFY OP_DUP OP_TOALTSTACK OP_CHECKDATASIGVERIFY OP_FROMALTSTACK OP_CHECKDATASIG OP_ENDIF`
       );
     });
   });

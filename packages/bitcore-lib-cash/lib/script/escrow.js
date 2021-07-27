@@ -102,31 +102,32 @@ Escrow.generateInputPublicKeyValidationOperations = function(inputPublicKeys) {
   return generateMerkleBasedInputPublicKeyValidationOperations(inputPublicKeys);
 };
 
-Escrow.getRedeemScriptOperations = function(inputPublicKeys, reclaimPublicKey) {
+Escrow.generateRedeemScriptOperations = function(inputPublicKeys, reclaimPublicKey) {
   const checkCustomerReclaimPublicKey = [
-    Opcodes.OP_DUP,
-    Opcodes.OP_HASH160,
+    Opcode.OP_DUP,
+    Opcode.OP_HASH160,
     Hash.sha256ripemd160(reclaimPublicKey.toBuffer()),
-    Opcodes.OP_EQUAL,
-    Opcodes.OP_IF,
-    Opcodes.OP_CHECKSIG,
-    Opcodes.OP_ELSE
+    Opcode.OP_EQUAL,
+    Opcode.OP_IF,
+    Opcode.OP_CHECKSIG,
+    Opcode.OP_ELSE
   ];
   const checkInputPublicKey = Escrow.generateInputPublicKeyValidationOperations(inputPublicKeys);
   const ensureTransactionsAreUnique = [
-    Opcodes.OP_OVER,
+    Opcode.OP_OVER,
     bufferFromNumber(4),
-    Opcodes.OP_PICK,
-    Opcodes.OP_EQUAL,
-    Opcodes.OP_NOT,
-    Opcodes.OP_VERIFY
+    Opcode.OP_PICK,
+    Opcode.OP_EQUAL,
+    Opcode.OP_NOT,
+    Opcode.OP_VERIFY
   ];
   const ensureBothSignaturesAreValid = [
-    Opcodes.OP_DUP,
-    Opcodes.OP_TOALTSTACK,
-    Opcodes.OP_CHECKDATASIGVERIFY,
-    Opcodes.OP_FROMALTSTACK,
-    Opcodes.OP_CHECKDATASIG
+    Opcode.OP_DUP,
+    Opcode.OP_TOALTSTACK,
+    Opcode.OP_CHECKDATASIGVERIFY,
+    Opcode.OP_FROMALTSTACK,
+    Opcode.OP_CHECKDATASIG,
+    Opcode.OP_ENDIF
   ];
   const allOperations = [
     ...checkCustomerReclaimPublicKey,
