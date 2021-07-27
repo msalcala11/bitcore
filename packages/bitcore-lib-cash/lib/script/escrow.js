@@ -1,4 +1,3 @@
-const { Script } = require('bitcore-lib');
 var Opcode = require('../opcode');
 var _ = require('lodash');
 
@@ -37,76 +36,69 @@ Escrow.generateMerkleRootFromPublicKeys = function(publicKeys) {
   return Escrow.getMerkleRoot(leaves);
 };
 
-var generateSingleInputPublicKeyValidationScript = function(inputPublicKey) {
+var appendSingleInputPublicKeyValidationScript = function(redeemScript, inputPublicKey) {
   const inputPublicKeyHash = Hash.sha256ripemd160(inputPublicKey.toBuffer());
-  const script = new Script();
-  script.add(Opcode.OP_DUP);
-  script.add(Opcode.OP_HASH160);
-  script.add(inputPublicKeyHash);
-  script.add(Opcode.OP_EQUALVERIFY);
-  return script;
+  redeemScript.add(Opcode.OP_DUP);
+  redeemScript.add(Opcode.OP_HASH160);
+  redeemScript.add(inputPublicKeyHash);
+  redeemScript.add(Opcode.OP_EQUALVERIFY);
+  return redeemScript;
 };
 
-var generateListBasedInputPublicKeyValidationScript = function(inputPublicKeys) {
+var appendListBasedInputPublicKeyValidationScript = function(redeemScript, inputPublicKeys) {
   const publicKeyHashes = inputPublicKeys.map(publicKey => {
     return Hash.sha256ripemd160(publicKey.toBuffer());
   });
-  const script = new Script();
   const dropOpCode = inputPublicKeys.length === 3 ? Opcode.OP_2DROP : Opcode.OP_DROP;
-  script.add(Opcode.OP_TOALTSTACK);
-  script.add(Opcode.OP_DUP);
-  script.add(Opcode.OP_HASH160);
-  publicKeyHashes.forEach(publicKeyHash => script.add(publicKeyHash));
-  script.add(Opcode.OP_FROMALTSTACK);
-  script.add(Opcode.OP_ROLL);
-  script.add(bufferFromNumber(inputPublicKeys.length));
-  script.add(Opcode.OP_ROLL);
-  script.add(Opcode.OP_EQUALVERIFY);
-  script.add(dropOpCode);
-  return script;
+  redeemScript.add(Opcode.OP_TOALTSTACK);
+  redeemScript.add(Opcode.OP_DUP);
+  redeemScript.add(Opcode.OP_HASH160);
+  publicKeyHashes.forEach(publicKeyHash => redeemScript.add(publicKeyHash));
+  redeemScript.add(Opcode.OP_FROMALTSTACK);
+  redeemScript.add(Opcode.OP_ROLL);
+  redeemScript.add(bufferFromNumber(inputPublicKeys.length));
+  redeemScript.add(Opcode.OP_ROLL);
+  redeemScript.add(Opcode.OP_EQUALVERIFY);
+  redeemScript.add(dropOpCode);
+  return redeemScript;
 };
 
-var generateMerkleBasedInputPublicKeyValidationScript = function(inputPublicKeys) {
+var appendMerkleBasedInputPublicKeyValidationScript = function(redeemScript, inputPublicKeys) {
   const numLevels = getNumMerkleLevels(inputPublicKeys.length);
   const rootHash = Escrow.generateMerkleRootFromPublicKeys(inputPublicKeys);
-  const hashPubKey = new Script();
-  hashPubKey.add(bufferFromNumber(numLevels + 1));
-  hashPubKey.add(Opcode.OP_PICK);
-  hashPubKey.add(Opcode.OP_HASH160);
-  const proveRoot = new Script();
+  redeemScript.add(bufferFromNumber(numLevels + 1));
+  redeemScript.add(Opcode.OP_PICK);
+  redeemScript.add(Opcode.OP_HASH160);
   Array(numLevels)
     .fill(0)
     .forEach((_, index) => {
       const leafIndexStackDepth = numLevels + 1 - index;
       const leafIndexOpCode = index === numLevels - 1 ? Opcode.OP_ROLL : Opcode.OP_PICK;
-      proveRoot.add(bufferFromNumber(leafIndexStackDepth));
-      proveRoot.add(leafIndexOpCode);
+      redeemScript.add(bufferFromNumber(leafIndexStackDepth));
+      redeemScript.add(leafIndexOpCode);
       if (index > 0) {
-        proveRoot.add(bufferFromNumber(Math.pow(2, index)));
-        proveRoot.add(Opcode.OP_DIV);
+        redeemScript.add(bufferFromNumber(Math.pow(2, index)));
+        redeemScript.add(Opcode.OP_DIV);
       }
-      proveRoot.add(bufferFromNumber(2));
-      proveRoot.add(Opcode.OP_MOD);
-      proveRoot.add(Opcode.OP_NOTIF);
-      proveRoot.add(Opcode.OP_SWAP);
-      proveRoot.add(Opcode.OP_ENDIF);
-      proveRoot.add(Opcode.OP_CAT);
-      proveRoot.add(Opcode.OP_HASH160);
+      redeemScript.add(bufferFromNumber(2));
+      redeemScript.add(Opcode.OP_MOD);
+      redeemScript.add(Opcode.OP_NOTIF);
+      redeemScript.add(Opcode.OP_SWAP);
+      redeemScript.add(Opcode.OP_ENDIF);
+      redeemScript.add(Opcode.OP_CAT);
+      redeemScript.add(Opcode.OP_HASH160);
     });
-  return hashPubKey
-    .add(proveRoot)
-    .add(rootHash)
-    .add(Opcode.OP_EQUALVERIFY);
+  return redeemScript.add(rootHash).add(Opcode.OP_EQUALVERIFY);
 };
 
-Escrow.generateInputPublicKeyValidationScript = function(inputPublicKeys) {
+Escrow.generateInputPublicKeyValidationScript = function(redeemScript, inputPublicKeys) {
   if (inputPublicKeys.length === 1) {
-    return generateSingleInputPublicKeyValidationScript(inputPublicKeys[0]);
+    return appendSingleInputPublicKeyValidationScript(redeemScript, inputPublicKeys[0]);
   }
   if ([2, 3].includes(inputPublicKeys.length)) {
-    return generateListBasedInputPublicKeyValidationScript(inputPublicKeys);
+    return appendListBasedInputPublicKeyValidationScript(redeemScript, inputPublicKeys);
   }
-  return generateMerkleBasedInputPublicKeyValidationScript(inputPublicKeys);
+  return appendMerkleBasedInputPublicKeyValidationScript(redeemScript, inputPublicKeys);
 };
 
 module.exports = Escrow;

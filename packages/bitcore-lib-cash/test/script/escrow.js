@@ -6,7 +6,7 @@ var bitcore = require('../..');
 
 var Hash = bitcore.crypto.Hash;
 
-// var Script = bitcore.Script;
+var Script = bitcore.Script;
 // var Networks = bitcore.Networks;
 // var Opcode = bitcore.Opcode;
 var PrivateKey = bitcore.PrivateKey;
@@ -37,7 +37,7 @@ describe.only('Escrow', function() {
   describe('#generateInputPublicKeyValidationScript', () => {
     it('should work for a single input public key', () => {
       const publicKey = PublicKey.fromString('03fb0ed01700a2e9303f76ec93c61114507d9ea9bb3704c873fa8c1c7f4fad0a49');
-      const script = Escrow.generateInputPublicKeyValidationScript([publicKey]);
+      const script = Escrow.generateInputPublicKeyValidationScript(new Script(), [publicKey]);
       script.toString().should.equal(`OP_DUP OP_HASH160 20 0x2a42558df3ea6f2a438251374d7bd61c81f09f96 OP_EQUALVERIFY`);
     });
     it('should work for two input public keys', () => {
@@ -46,7 +46,7 @@ describe.only('Escrow', function() {
         '0312e866a0b1dd1221a79729907f45672ad0ee426f1234f5f44c447000daa42341'
       ];
       const publicKeys = publicKeyStrings.map(publicKeyString => PublicKey.fromString(publicKeyString));
-      const script = Escrow.generateInputPublicKeyValidationScript(publicKeys);
+      const script = Escrow.generateInputPublicKeyValidationScript(new Script(), publicKeys);
       script
         .toString()
         .should.equal(
@@ -60,7 +60,7 @@ describe.only('Escrow', function() {
         '0312e866a0b1dd1221a79729907f45672ad0ee426f1234f5f44c447000daa42341'
       ];
       const publicKeys = publicKeyStrings.map(publicKeyString => PublicKey.fromString(publicKeyString));
-      const script = Escrow.generateInputPublicKeyValidationScript(publicKeys);
+      const script = Escrow.generateInputPublicKeyValidationScript(new Script(), publicKeys);
       script
         .toString()
         .should.equal(
@@ -75,7 +75,7 @@ describe.only('Escrow', function() {
         '02f50aa80526676b0c6058c0daed0b6bbacfac17cf7879cd45130dc8dc3a3be873'
       ];
       const publicKeys = publicKeyStrings.map(publicKeyString => PublicKey.fromString(publicKeyString));
-      const script = Escrow.generateInputPublicKeyValidationScript(publicKeys);
+      const script = Escrow.generateInputPublicKeyValidationScript(new Script(), publicKeys);
       script
         .toString()
         .should.equal(
@@ -91,7 +91,7 @@ describe.only('Escrow', function() {
         '03e62689382e81452f0b95220fff4443521dc4248938168280d76b79984876e61d'
       ];
       const publicKeys = publicKeyStrings.map(publicKeyString => PublicKey.fromString(publicKeyString));
-      const script = Escrow.generateInputPublicKeyValidationScript(publicKeys);
+      const script = Escrow.generateInputPublicKeyValidationScript(new Script(), publicKeys);
       script
         .toString()
         .should.equal(
@@ -116,7 +116,7 @@ describe.only('Escrow', function() {
         '0301ce14bcadae1c49beec6575c00969888351c3cd20d0e6cb7713668ce8cc37d9'
       ];
       const publicKeys = publicKeyStrings.map(publicKeyString => PublicKey.fromString(publicKeyString));
-      const script = Escrow.generateInputPublicKeyValidationScript(publicKeys);
+      const script = Escrow.generateInputPublicKeyValidationScript(new Script(), publicKeys);
       script
         .toString()
         .should.equal(
