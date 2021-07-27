@@ -1,7 +1,7 @@
-var Opcode = require('../opcode');
 var _ = require('lodash');
 
 var Hash = require('../crypto/hash');
+var Opcode = require('../opcode');
 var PublicKey = require('../publickey');
 
 var Escrow = {};
@@ -36,69 +36,105 @@ Escrow.generateMerkleRootFromPublicKeys = function(publicKeys) {
   return Escrow.getMerkleRoot(leaves);
 };
 
-var appendSingleInputPublicKeyValidationScript = function(redeemScript, inputPublicKey) {
+var generateSingleInputPublicKeyValidationOperations = function(inputPublicKey) {
   const inputPublicKeyHash = Hash.sha256ripemd160(inputPublicKey.toBuffer());
-  redeemScript.add(Opcode.OP_DUP);
-  redeemScript.add(Opcode.OP_HASH160);
-  redeemScript.add(inputPublicKeyHash);
-  redeemScript.add(Opcode.OP_EQUALVERIFY);
-  return redeemScript;
+  return [Opcode.OP_DUP, Opcode.OP_HASH160, inputPublicKeyHash, Opcode.OP_EQUALVERIFY];
 };
 
-var appendListBasedInputPublicKeyValidationScript = function(redeemScript, inputPublicKeys) {
-  const publicKeyHashes = inputPublicKeys.map(publicKey => {
-    return Hash.sha256ripemd160(publicKey.toBuffer());
-  });
+var generateListBasedInputPublicKeyValidationOperations = function(inputPublicKeys) {
+  const publicKeyHashes = inputPublicKeys.map(publicKey => Hash.sha256ripemd160(publicKey.toBuffer()));
   const dropOpCode = inputPublicKeys.length === 3 ? Opcode.OP_2DROP : Opcode.OP_DROP;
-  redeemScript.add(Opcode.OP_TOALTSTACK);
-  redeemScript.add(Opcode.OP_DUP);
-  redeemScript.add(Opcode.OP_HASH160);
-  publicKeyHashes.forEach(publicKeyHash => redeemScript.add(publicKeyHash));
-  redeemScript.add(Opcode.OP_FROMALTSTACK);
-  redeemScript.add(Opcode.OP_ROLL);
-  redeemScript.add(bufferFromNumber(inputPublicKeys.length));
-  redeemScript.add(Opcode.OP_ROLL);
-  redeemScript.add(Opcode.OP_EQUALVERIFY);
-  redeemScript.add(dropOpCode);
-  return redeemScript;
+  return [
+    Opcode.OP_TOALTSTACK,
+    Opcode.OP_DUP,
+    Opcode.OP_HASH160,
+    ...publicKeyHashes,
+    Opcode.OP_FROMALTSTACK,
+    Opcode.OP_ROLL,
+    bufferFromNumber(inputPublicKeys.length),
+    Opcode.OP_ROLL,
+    Opcode.OP_EQUALVERIFY,
+    dropOpCode
+  ];
 };
 
-var appendMerkleBasedInputPublicKeyValidationScript = function(redeemScript, inputPublicKeys) {
+var generateMerkleBasedInputPublicKeyValidationOperations = function(inputPublicKeys) {
   const numLevels = getNumMerkleLevels(inputPublicKeys.length);
   const rootHash = Escrow.generateMerkleRootFromPublicKeys(inputPublicKeys);
-  redeemScript.add(bufferFromNumber(numLevels + 1));
-  redeemScript.add(Opcode.OP_PICK);
-  redeemScript.add(Opcode.OP_HASH160);
-  Array(numLevels)
-    .fill(0)
-    .forEach((_, index) => {
-      const leafIndexStackDepth = numLevels + 1 - index;
-      const leafIndexOpCode = index === numLevels - 1 ? Opcode.OP_ROLL : Opcode.OP_PICK;
-      redeemScript.add(bufferFromNumber(leafIndexStackDepth));
-      redeemScript.add(leafIndexOpCode);
-      if (index > 0) {
-        redeemScript.add(bufferFromNumber(Math.pow(2, index)));
-        redeemScript.add(Opcode.OP_DIV);
-      }
-      redeemScript.add(bufferFromNumber(2));
-      redeemScript.add(Opcode.OP_MOD);
-      redeemScript.add(Opcode.OP_NOTIF);
-      redeemScript.add(Opcode.OP_SWAP);
-      redeemScript.add(Opcode.OP_ENDIF);
-      redeemScript.add(Opcode.OP_CAT);
-      redeemScript.add(Opcode.OP_HASH160);
-    });
-  return redeemScript.add(rootHash).add(Opcode.OP_EQUALVERIFY);
+  const merkleTreeConstructionOperationsForEachLevel = Array(numLevels)
+    .fill()
+    .map((_, levelIndex) => {
+      const leafIndexStackDepth = numLevels + 1 - levelIndex;
+      const leafIndexOpCode = levelIndex === numLevels - 1 ? Opcode.OP_ROLL : Opcode.OP_PICK;
+      const divisor = Math.pow(2, levelIndex);
+      const computeParentIndex = levelIndex > 0 ? [bufferFromNumber(divisor), Opcode.OP_DIV] : [];
+      return [
+        bufferFromNumber(leafIndexStackDepth),
+        leafIndexOpCode,
+        ...computeParentIndex,
+        bufferFromNumber(2),
+        Opcode.OP_MOD,
+        Opcode.OP_NOTIF,
+        Opcode.OP_SWAP,
+        Opcode.OP_ENDIF,
+        Opcode.OP_CAT,
+        Opcode.OP_HASH160
+      ];
+    })
+    .reduce((arr, item) => arr.concat(item), []);
+  return [
+    bufferFromNumber(numLevels + 1),
+    Opcode.OP_PICK,
+    Opcode.OP_HASH160,
+    ...merkleTreeConstructionOperationsForEachLevel,
+    rootHash,
+    Opcode.OP_EQUALVERIFY
+  ];
 };
 
-Escrow.generateInputPublicKeyValidationScript = function(redeemScript, inputPublicKeys) {
+Escrow.generateInputPublicKeyValidationOperations = function(inputPublicKeys) {
   if (inputPublicKeys.length === 1) {
-    return appendSingleInputPublicKeyValidationScript(redeemScript, inputPublicKeys[0]);
+    return generateSingleInputPublicKeyValidationOperations(inputPublicKeys[0]);
   }
   if ([2, 3].includes(inputPublicKeys.length)) {
-    return appendListBasedInputPublicKeyValidationScript(redeemScript, inputPublicKeys);
+    return generateListBasedInputPublicKeyValidationOperations(inputPublicKeys);
   }
-  return appendMerkleBasedInputPublicKeyValidationScript(redeemScript, inputPublicKeys);
+  return generateMerkleBasedInputPublicKeyValidationOperations(inputPublicKeys);
+};
+
+Escrow.getRedeemScriptOperations = function(inputPublicKeys, reclaimPublicKey) {
+  const checkCustomerReclaimPublicKey = [
+    Opcodes.OP_DUP,
+    Opcodes.OP_HASH160,
+    Hash.sha256ripemd160(reclaimPublicKey.toBuffer()),
+    Opcodes.OP_EQUAL,
+    Opcodes.OP_IF,
+    Opcodes.OP_CHECKSIG,
+    Opcodes.OP_ELSE
+  ];
+  const checkInputPublicKey = Escrow.generateInputPublicKeyValidationOperations(inputPublicKeys);
+  const ensureTransactionsAreUnique = [
+    Opcodes.OP_OVER,
+    bufferFromNumber(4),
+    Opcodes.OP_PICK,
+    Opcodes.OP_EQUAL,
+    Opcodes.OP_NOT,
+    Opcodes.OP_VERIFY
+  ];
+  const ensureBothSignaturesAreValid = [
+    Opcodes.OP_DUP,
+    Opcodes.OP_TOALTSTACK,
+    Opcodes.OP_CHECKDATASIGVERIFY,
+    Opcodes.OP_FROMALTSTACK,
+    Opcodes.OP_CHECKDATASIG
+  ];
+  const allOperations = [
+    ...checkCustomerReclaimPublicKey,
+    ...checkInputPublicKey,
+    ...ensureTransactionsAreUnique,
+    ...ensureBothSignaturesAreValid
+  ];
+  return allOperations;
 };
 
 module.exports = Escrow;
