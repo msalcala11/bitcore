@@ -1,18 +1,18 @@
-var _ = require('lodash');
+const _ = require('lodash');
 
-var Hash = require('../crypto/hash');
-var Opcode = require('../opcode');
-var PublicKey = require('../publickey');
+const Hash = require('../crypto/hash');
+const Opcode = require('../opcode');
+const PublicKey = require('../publickey');
 
-var Escrow = {};
+const Escrow = {};
 
-var bufferFromNumber = function(n) {
+const bufferFromNumber = function(n) {
   const hexString = n.toString(16);
   const fullHexString = `${hexString.length === 1 && n > 0 ? '0' : ''}${hexString}`;
   return Buffer.from(fullHexString, 'hex');
 };
 
-var getNumMerkleLevels = function(numPublicKeys) {
+const getNumMerkleLevels = function(numPublicKeys) {
   return Math.ceil(Math.log2(numPublicKeys));
 };
 
@@ -36,12 +36,12 @@ Escrow.generateMerkleRootFromPublicKeys = function(publicKeys) {
   return Escrow.getMerkleRoot(leaves);
 };
 
-var generateSingleInputPublicKeyValidationOperations = function(inputPublicKey) {
+const generateSingleInputPublicKeyValidationOperations = function(inputPublicKey) {
   const inputPublicKeyHash = Hash.sha256ripemd160(inputPublicKey.toBuffer());
   return [Opcode.OP_DUP, Opcode.OP_HASH160, inputPublicKeyHash, Opcode.OP_EQUALVERIFY];
 };
 
-var generateListBasedInputPublicKeyValidationOperations = function(inputPublicKeys) {
+const generateListBasedInputPublicKeyValidationOperations = function(inputPublicKeys) {
   const publicKeyHashes = inputPublicKeys.map(publicKey => Hash.sha256ripemd160(publicKey.toBuffer()));
   const dropOpCode = inputPublicKeys.length === 3 ? Opcode.OP_2DROP : Opcode.OP_DROP;
   return [
@@ -58,7 +58,7 @@ var generateListBasedInputPublicKeyValidationOperations = function(inputPublicKe
   ];
 };
 
-var generateMerkleBasedInputPublicKeyValidationOperations = function(inputPublicKeys) {
+const generateMerkleBasedInputPublicKeyValidationOperations = function(inputPublicKeys) {
   const numLevels = getNumMerkleLevels(inputPublicKeys.length);
   const rootHash = Escrow.generateMerkleRootFromPublicKeys(inputPublicKeys);
   const merkleTreeConstructionOperationsForEachLevel = Array(numLevels)

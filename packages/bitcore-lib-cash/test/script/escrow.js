@@ -1,18 +1,18 @@
 'use strict';
 
-var should = require('chai').should();
-var expect = require('chai').expect;
-var bitcore = require('../..');
+const should = require('chai').should();
+const expect = require('chai').expect;
+const bitcore = require('../..');
 
-var Hash = bitcore.crypto.Hash;
+const Hash = bitcore.crypto.Hash;
 
-var Script = bitcore.Script;
-// var Networks = bitcore.Networks;
-// var Opcode = bitcore.Opcode;
-// var PrivateKey = bitcore.PrivateKey;
-var PublicKey = bitcore.PublicKey;
-// var Address = bitcore.Address;
-var Escrow = require('../../lib/script/escrow');
+const Script = bitcore.Script;
+// const Networks = bitcore.Networks;
+// const Opcode = bitcore.Opcode;
+// const PrivateKey = bitcore.PrivateKey;
+const PublicKey = bitcore.PublicKey;
+// const Address = bitcore.Address;
+const Escrow = require('../../lib/script/escrow');
 
 const checkScriptOperations = (operations, expectedScriptString) => {
   const script = new Script();
