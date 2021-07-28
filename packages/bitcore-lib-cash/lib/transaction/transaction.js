@@ -1292,7 +1292,7 @@ Transaction.prototype.isZceSecured = function(escrowReclaimTx, requiredEscrowSat
   const [reclaimSignatureString, reclaimPublicKeyString, redeemScriptString] = escrowUnlockingScriptParts;
   const reclaimPublicKey = new PublicKey(reclaimPublicKeyString);
   const inputPublicKeys = this.inputs.map(input => new PublicKey(input.script.getPublicKey()));
-  const inputSignatureStrings = this.inputs.map(input => input.script.toASM()[0]);
+  const inputSignatureStrings = this.inputs.map(input => input.script.toASM().split(' ')[0]);
 
   const allPublicKeysCompressed = [reclaimPublicKey, ...inputPublicKeys].every(publicKey => publicKey.compressed);
   if (!allPublicKeysCompressed) {
