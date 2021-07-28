@@ -1261,7 +1261,7 @@ Transaction.prototype.isZceSecured = function(escrowReclaimTx, requiredEscrowSat
   if (!allInputsAreP2pkh) {
     return false;
   }
-  
+
   const escrowInputIndex = 0;
   const reclaimTx = new Transaction(escrowReclaimTx);
   const escrowInput = reclaimTx.inputs[escrowInputIndex];
@@ -1292,6 +1292,12 @@ Transaction.prototype.isZceSecured = function(escrowReclaimTx, requiredEscrowSat
   const [reclaimSignatureString, reclaimPublicKeyString, redeemScriptString] = escrowUnlockingScriptParts;
   const reclaimPublicKey = new PublicKey(reclaimPublicKeyString);
   const inputPublicKeys = this.inputs.map(input => new PublicKey(input.script.getPublicKey()));
+
+  const allPublicKeysCompressed = [reclaimPublicKey, ...inputPublicKeys].every(publicKey => publicKey.compressed);
+  if (!allPublicKeysCompressed) {
+    return false;
+  }
+
   const correctEscrowRedeemScript = Script.buildEscrowOut(inputPublicKeys, reclaimPublicKey);
   const correctEscrowRedeemScriptHash = Hash.sha256ripemd160(correctEscrowRedeemScript.toBuffer());
 
