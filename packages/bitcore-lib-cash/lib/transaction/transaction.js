@@ -1299,7 +1299,7 @@ Transaction.prototype.isZceSecured = function(escrowReclaimTx, requiredEscrowSat
     return false;
   }
 
-  const allSignaturesSighashAll = [reclaimPublicKeyString, ...inputSignatureStrings].every(signatureString =>
+  const allSignaturesSighashAll = [reclaimSignatureString, ...inputSignatureStrings].every(signatureString =>
     signatureString.endsWith('41')
   );
   if (!allSignaturesSighashAll) {
