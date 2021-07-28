@@ -981,6 +981,21 @@ Script.buildPublicKeyHashIn = function(publicKey, signature, sigtype) {
 };
 
 /**
+ * Builds a scriptSig (a script for an input) that signs an escrow output script.
+ *
+ * @param {PublicKey} publicKey
+ * @param {Signature} signature - a Signature object
+ * @param {RedeemScript} redeemScript - the escrow redeemScript
+ */
+Script.buildEscrowIn = function(publicKey, signature, redeemScript) {
+  $.checkArgument(signature instanceof Signature);
+  return new Script()
+    .add(BufferUtil.concat([signature.toBuffer('schnorr'), BufferUtil.integerAsSingleByteBuffer(0x41)]))
+    .add(publicKey.toBuffer())
+    .add(redeemScript.toBuffer());
+};
+
+/**
  * @returns {Script} an empty script
  */
 Script.empty = function() {

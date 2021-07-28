@@ -19,22 +19,33 @@ function EscrowInput(input, inputPublicKeys, reclaimPublicKey, signatures) {
   this.inputPublicKeys = inputPublicKeys;
   this.reclaimPublicKey = reclaimPublicKey;
   this.redeemScript = Script.buildEscrowOut(inputPublicKeys, reclaimPublicKey);
-  $.checkState(Script.buildScriptHashOut(this.redeemScript).equals(this.output.script),
-               'Provided public keys don\'t hash to the provided output');
+  $.checkState(
+    Script.buildScriptHashOut(this.redeemScript).equals(this.output.script),
+    "Provided public keys don't hash to the provided output"
+  );
   this.signatures = this._deserializeSignatures(signatures);
 }
 inherits(EscrowInput, Input);
 
 EscrowInput.prototype.getSignatures = function(transaction, privateKey, index, sigtype, hashData, signingMethod) {
-  if(this.reclaimPublicKey.toString() !== privateKey.publicKey.toString()) return [];
+  if (this.reclaimPublicKey.toString() !== privateKey.publicKey.toString()) return [];
   $.checkState(this.output instanceof Output);
-  sigtype = sigtype || (Signature.SIGHASH_ALL |  Signature.SIGHASH_FORKID);
+  sigtype = sigtype || Signature.SIGHASH_ALL | Signature.SIGHASH_FORKID;
   const signature = new TransactionSignature({
     publicKey: privateKey.publicKey,
     prevTxId: this.prevTxId,
     outputIndex: this.outputIndex,
     inputIndex: index,
-    signature: Sighash.sign(transaction, privateKey, sigtype, index, this.redeemScript, this.output.satoshisBN, undefined, signingMethod),
+    signature: Sighash.sign(
+      transaction,
+      privateKey,
+      sigtype,
+      index,
+      this.redeemScript,
+      this.output.satoshisBN,
+      undefined,
+      signingMethod
+    ),
     sigtype: sigtype
   });
   return [signature];
@@ -42,18 +53,10 @@ EscrowInput.prototype.getSignatures = function(transaction, privateKey, index, s
 
 EscrowInput.prototype.addSignature = function(transaction, signature, signingMethod) {
   $.checkState(this.isValidSignature(transaction, signature, signingMethod));
-  const signatureString = signature.signature.toBuffer('schnorr').toString('hex') + '41';
-  const redeemScript = this.redeemScript.toHex();
-  const redeemScriptBytes = redeemScript.length / 2;
-  const redeemScriptPushPrefix = redeemScriptBytes > 75 ? `OP_PUSHDATA_1 ${redeemScriptBytes}` : `OP_PUSHBYTES_${redeemScriptBytes}`; 
-  const reclaimScript = `OP_PUSHBYTES_${
-      signatureString.length / 2
-    } 0x${signatureString} OP_PUSHBYTES_33 0x${this.reclaimPublicKey.toString()} ${redeemScriptPushPrefix} 0x${redeemScript}`
-      .replace(new RegExp('OP_PUSHBYTES_', 'g'), '')
-      .replace(new RegExp('PUSHDATA_1', 'g'), 'PUSHDATA1');
+  const reclaimScript = Script.buildEscrowIn(this.reclaimPublicKey, signature.signature, this.redeemScript);
   this.setScript(reclaimScript);
   this.signatures = [signature];
-}
+};
 
 EscrowInput.prototype.isValidSignature = function(transaction, signature, signingMethod) {
   signingMethod = signingMethod || 'ecdsa';
@@ -76,7 +79,7 @@ EscrowInput.prototype.clearSignatures = function() {
 
 EscrowInput.prototype.isFullySigned = function() {
   return this.signatures.length === 1;
-}
+};
 
 EscrowInput.prototype._deserializeSignatures = function(signatures) {
   return signatures.map(signature => new TransactionSignature(signature));
