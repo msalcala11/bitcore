@@ -7,8 +7,11 @@ const PublicKey = require('../publickey');
 const Escrow = {};
 
 const bufferFromNumber = function(n) {
+  if (n === 0) {
+    return Buffer.alloc(0);
+  }
   const hexString = n.toString(16);
-  const fullHexString = `${hexString.length === 1 && n > 0 ? '0' : ''}${hexString}`;
+  const fullHexString = `${hexString.length === 1 ? '0' : ''}${hexString}`;
   return Buffer.from(fullHexString, 'hex');
 };
 
