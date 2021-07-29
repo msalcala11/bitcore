@@ -20,7 +20,7 @@ Escrow.getMerkleRoot = function getMerkleRoot(hashes) {
   if (hashes.length === 1) {
     return hashes[0];
   }
-  const parentHashes = _.chunk(hashes, 2).map(hashPair => Hash.sha256ripemd160(new Buffer.concat(hashPair)));
+  const parentHashes = _.chunk(hashes, 2).map(hashPair => Hash.sha256ripemd160(Buffer.concat(hashPair)));
   return getMerkleRoot(parentHashes);
 };
 
