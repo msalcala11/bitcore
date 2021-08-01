@@ -1130,7 +1130,7 @@ describe('Transaction', function() {
       '0100000001e3dfc56b291142f473a3f696dd81da7082ff3e818622ae87e22de181f9e604f701000000dd4110a96ec751f2c4cb62c0994c1e818b631e94e8ee2b89454bdc03468326951e1f04b38aec8bbd2af9534638903e7c1bd2910fada6354b41b2b62b53606ae385b74121027c10dc91edcad52c4125fdf5144453fdda9aa293654af21889969e44f9cfe5a44c7776a9143ccbab9f533ed696cdeed7bdd69e47e885e7cae58763ac67010579a9010579010297647c687ea9010479010296010297647c687ea9010379010496010297647c687ea901027a010896010297647c687ea914694537731c6ee36d97e377fb780e8c2fc38d655c8878010479879169766bbb6cba68ffffffff01b4220000000000001976a914396dae438f98cb73759682385ef1bec93258af5a88ac00000000';
     const requiredEscrowSatoshis = 9190;
     const requiredFeeRate = 1;
-    it('should return true for a properly constructed escrowRedeemTx', () => {
+    it('should return true for a properly constructed escrowReclaimTx', () => {
       const zceSecured = zceTx.isZceSecured(reclaimRawTx, requiredEscrowSatoshis, requiredFeeRate);
       zceSecured.should.equal(true);
     });
@@ -1142,7 +1142,7 @@ describe('Transaction', function() {
       const zceSecured = zceTx.isZceSecured(reclaimRawTx, requiredEscrowSatoshis, requiredFeeRate + 1);
       zceSecured.should.equal(false);
     });
-    it('should not crash and return false if invalid reclaim tx provided', () => {
+    it('should not crash and return false if invalid escrowReclaimTx provided', () => {
       const zceSecured = zceTx.isZceSecured('invalidhex', requiredEscrowSatoshis, requiredFeeRate);
       zceSecured.should.equal(false);
     });
