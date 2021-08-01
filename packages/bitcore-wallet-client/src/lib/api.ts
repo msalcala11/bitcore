@@ -2090,10 +2090,8 @@ export class API extends EventEmitter {
             const unsignedReclaimTx = Utils.buildTx(txp.escrowReclaimTxp);
             const reclaimTx = _.cloneDeep(unsignedReclaimTx);
             this._applyAllSignatures(txp.escrowReclaimTxp, reclaimTx);
-            var rawUnsignedReclaimTx = unsignedReclaimTx.uncheckedSerialize();
             var rawSignedReclaimTx = reclaimTx.serialize(serializationOpts);
           }
-          const unsignedReclaimTransactions = [rawUnsignedReclaimTx];
           const signedReclaimTransactions = [rawSignedReclaimTx];
 
           const weightedSize = [];
@@ -2113,8 +2111,7 @@ export class API extends EventEmitter {
             }
             unsignedTransactions.push({
               tx: unsigned,
-              weightedSize: size,
-              escrowReclaimTx: unsignedReclaimTransactions[i]
+              weightedSize: size
             });
             weightedSize.push(size);
 
