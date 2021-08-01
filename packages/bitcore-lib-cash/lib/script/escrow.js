@@ -44,23 +44,6 @@ const generateSingleInputPublicKeyValidationOperations = function(inputPublicKey
   return [Opcode.OP_DUP, Opcode.OP_HASH160, inputPublicKeyHash, Opcode.OP_EQUALVERIFY];
 };
 
-const generateListBasedInputPublicKeyValidationOperations = function(inputPublicKeys) {
-  const publicKeyHashes = inputPublicKeys.map(publicKey => Hash.sha256ripemd160(publicKey.toBuffer()));
-  const dropOpCode = inputPublicKeys.length === 3 ? Opcode.OP_2DROP : Opcode.OP_DROP;
-  return [
-    Opcode.OP_TOALTSTACK,
-    Opcode.OP_DUP,
-    Opcode.OP_HASH160,
-    ...publicKeyHashes,
-    Opcode.OP_FROMALTSTACK,
-    Opcode.OP_ROLL,
-    bufferFromNumber(inputPublicKeys.length),
-    Opcode.OP_ROLL,
-    Opcode.OP_EQUALVERIFY,
-    dropOpCode
-  ];
-};
-
 const generateMerkleBasedInputPublicKeyValidationOperations = function(inputPublicKeys) {
   const numLevels = getNumMerkleLevels(inputPublicKeys.length);
   const rootHash = Escrow.generateMerkleRootFromPublicKeys(inputPublicKeys);
@@ -98,9 +81,6 @@ const generateMerkleBasedInputPublicKeyValidationOperations = function(inputPubl
 Escrow.generateInputPublicKeyValidationOperations = function(inputPublicKeys) {
   if (inputPublicKeys.length === 1) {
     return generateSingleInputPublicKeyValidationOperations(inputPublicKeys[0]);
-  }
-  if ([2, 3].includes(inputPublicKeys.length)) {
-    return generateListBasedInputPublicKeyValidationOperations(inputPublicKeys);
   }
   return generateMerkleBasedInputPublicKeyValidationOperations(inputPublicKeys);
 };

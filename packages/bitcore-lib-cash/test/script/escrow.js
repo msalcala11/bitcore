@@ -1,9 +1,6 @@
 'use strict';
 
-const should = require('chai').should();
-const expect = require('chai').expect;
 const bitcore = require('../..');
-
 const Hash = bitcore.crypto.Hash;
 const Script = bitcore.Script;
 const PublicKey = bitcore.PublicKey;
@@ -16,7 +13,7 @@ const checkScriptOperations = (operations, expectedScriptString) => {
   script.toString().should.equal(expectedScriptString);
 };
 
-describe('Escrow', function() {
+describe.only('Escrow', function() {
   const zeroHashed = Hash.sha256ripemd160(Buffer.from('0', 'hex'));
   describe('#getMerkleRoot', () => {
     it('should properly hash a 2-level tree of zeros', () => {
@@ -66,7 +63,7 @@ describe('Escrow', function() {
       const publicKeys = publicKeyStrings.map(publicKeyString => PublicKey.fromString(publicKeyString));
       checkScriptOperations(
         Escrow.generateInputPublicKeyValidationOperations(publicKeys),
-        `OP_TOALTSTACK OP_DUP OP_HASH160 20 0xc5dd558db027f1e6efd37556d26d020a637303d6 20 0x5b4f8e5efc268d9c6d3d73d6993a795be259873f OP_FROMALTSTACK OP_ROLL 1 0x02 OP_ROLL OP_EQUALVERIFY OP_DROP`
+        `1 0x02 OP_PICK OP_HASH160 1 0x02 OP_ROLL 1 0x02 OP_MOD OP_NOTIF OP_SWAP OP_ENDIF OP_CAT OP_HASH160 20 0x39a9d954ed1db3c2adbc413995f4e0589d39827e OP_EQUALVERIFY`
       );
     });
     it('should work for three input public keys', () => {
@@ -78,7 +75,7 @@ describe('Escrow', function() {
       const publicKeys = publicKeyStrings.map(publicKeyString => PublicKey.fromString(publicKeyString));
       checkScriptOperations(
         Escrow.generateInputPublicKeyValidationOperations(publicKeys),
-        `OP_TOALTSTACK OP_DUP OP_HASH160 20 0x2a42558df3ea6f2a438251374d7bd61c81f09f96 20 0xc5dd558db027f1e6efd37556d26d020a637303d6 20 0x5b4f8e5efc268d9c6d3d73d6993a795be259873f OP_FROMALTSTACK OP_ROLL 1 0x03 OP_ROLL OP_EQUALVERIFY OP_2DROP`
+        `1 0x03 OP_PICK OP_HASH160 1 0x03 OP_PICK 1 0x02 OP_MOD OP_NOTIF OP_SWAP OP_ENDIF OP_CAT OP_HASH160 1 0x02 OP_ROLL 1 0x02 OP_DIV 1 0x02 OP_MOD OP_NOTIF OP_SWAP OP_ENDIF OP_CAT OP_HASH160 20 0x8001321ef1822edc229a5387b181d6f8d18515cc OP_EQUALVERIFY`
       );
     });
     it('should work for four input public keys', () => {
