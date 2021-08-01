@@ -69,9 +69,7 @@ export interface ITxProposal {
   destinationTag?: string;
   invoiceID?: string;
   lockUntilBlockHeight?: number;
-  instantAcceptanceEscrow?: {
-    satoshis: number;
-  };
+  instantAcceptanceEscrow?: number;
   allowNotYetBroadcastUtxos?: boolean;
 }
 
@@ -133,9 +131,7 @@ export class TxProposal {
   destinationTag?: string;
   invoiceID?: string;
   lockUntilBlockHeight?: number;
-  instantAcceptanceEscrow?: {
-    satoshis: number;
-  };
+  instantAcceptanceEscrow?: number;
   allowNotYetBroadcastUtxos?: boolean;
 
   static create(opts) {
