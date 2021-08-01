@@ -989,8 +989,9 @@ Script.buildPublicKeyHashIn = function(publicKey, signature, sigtype) {
  */
 Script.buildEscrowIn = function(publicKey, signature, redeemScript) {
   $.checkArgument(signature instanceof Signature);
+  const sighashAll = Signature.SIGHASH_ALL | Signature.SIGHASH_FORKID;
   return new Script()
-    .add(BufferUtil.concat([signature.toBuffer('schnorr'), BufferUtil.integerAsSingleByteBuffer(0x41)]))
+    .add(BufferUtil.concat([signature.toBuffer('schnorr'), BufferUtil.integerAsSingleByteBuffer(sighashAll)]))
     .add(publicKey.toBuffer())
     .add(redeemScript.toBuffer());
 };
