@@ -1310,10 +1310,10 @@ Transaction.prototype.isZceSecured = function(escrowReclaimTx, requiredEscrowSat
     return false;
   }
 
-  const requiredSigType = Signature.SIGHASH_ALL | Signature.SIGHASH_FORKID;
+  const sighashAll = Signature.SIGHASH_ALL | Signature.SIGHASH_FORKID;
 
   const allSignaturesSighashAll = [reclaimSignatureString, ...inputSignatureStrings].every(signatureString =>
-    signatureString.endsWith(requiredSigType.toString(16))
+    signatureString.endsWith(sighashAll.toString(16))
   );
   if (!allSignaturesSighashAll) {
     return false;
@@ -1337,7 +1337,7 @@ Transaction.prototype.isZceSecured = function(escrowReclaimTx, requiredEscrowSat
   }
 
   const reclaimSignature = Signature.fromString(reclaimSignatureString);
-  reclaimSignature.nhashtype = requiredSigType;
+  reclaimSignature.nhashtype = sighashAll;
 
   const reclaimSigValid = reclaimTx.verifySignature(
     reclaimSignature,
