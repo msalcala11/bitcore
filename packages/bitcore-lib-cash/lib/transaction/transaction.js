@@ -1263,7 +1263,14 @@ Transaction.prototype.isZceSecured = function(escrowReclaimTx, requiredEscrowSat
   }
 
   const escrowInputIndex = 0;
-  const reclaimTx = new Transaction(escrowReclaimTx);
+
+  let reclaimTx;
+  try {
+    reclaimTx = new Transaction(escrowReclaimTx);
+  } catch (e) {
+    return false;
+  }
+
   const escrowInput = reclaimTx.inputs[escrowInputIndex];
 
   if (escrowInput.prevTxId.toString('hex') !== this.id) {
@@ -1272,7 +1279,11 @@ Transaction.prototype.isZceSecured = function(escrowReclaimTx, requiredEscrowSat
 
   const escrowUtxo = this.outputs[escrowInput.outputIndex];
 
-  if (escrowUtxo.amount < requiredEscrowSatoshis) {
+  if (!escrowUtxo) {
+    return false;
+  }
+
+  if (escrowUtxo.toObject().satoshis < requiredEscrowSatoshis) {
     return false;
   }
 

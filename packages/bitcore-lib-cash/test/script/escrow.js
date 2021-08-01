@@ -20,10 +20,10 @@ const checkScriptOperations = (operations, expectedScriptString) => {
   script.toString().should.equal(expectedScriptString);
 };
 
-describe.only('Escrow', function() {
+describe('Escrow', function() {
+  const zeroHashed = Hash.sha256ripemd160(Buffer.from('0', 'hex'));
   describe('#getMerkleRoot', () => {
     it('should properly hash a 2-level tree of zeros', () => {
-      const zeroHashed = Hash.sha256ripemd160(Buffer.from('0', 'hex'));
       const merkleRoot = Escrow.getMerkleRoot([zeroHashed, zeroHashed, zeroHashed, zeroHashed]);
       merkleRoot.toString('hex').should.equal('bcd72713b594ea45d44512ca7912c625f7e69092');
     });
@@ -38,6 +38,20 @@ describe.only('Escrow', function() {
       const publicKeys = publicKeyStrings.map(publicKeyString => PublicKey.fromString(publicKeyString));
       const merkleRoot = Escrow.generateMerkleRootFromPublicKeys(publicKeys);
       merkleRoot.toString('hex').should.equal('8001321ef1822edc229a5387b181d6f8d18515cc');
+    });
+    it('should fill empty slots with zeros', () => {
+      const publicKeyStrings = [
+        '033c7364c06498e9d31ac5ba32c5071080a25c481ba3222df32a1839cdc57c1036',
+        '034c6f4984b35e4260e441c6eccb90f382e02c497aa1d2dc20029887272a37d2c4',
+        '0284f6810dc878d9fda1843f05404f22dbc1d1837bba80efb011ebca832bbe728a',
+        '0379116c71638ad1264d1c54faebb6a1c00f1bd187faf32707d02ae2252d706971',
+        '03e62689382e81452f0b95220fff4443521dc4248938168280d76b79984876e61d'
+      ].sort();
+      const publicKeys = publicKeyStrings.map(publicKeyString => PublicKey.fromString(publicKeyString));
+      const publicKeyHashes = publicKeys.map(publicKey => Hash.sha256ripemd160(publicKey.toBuffer()));
+      Escrow.getMerkleRoot([...publicKeyHashes, zeroHashed, zeroHashed, zeroHashed]).should.eql(
+        Escrow.generateMerkleRootFromPublicKeys(publicKeys.map(buffer => new PublicKey(buffer)))
+      );
     });
   });
   describe('#generateInputPublicKeyValidationOperations', () => {
@@ -132,6 +146,19 @@ describe.only('Escrow', function() {
         Escrow.generateRedeemScriptOperations([inputPublicKey], redeemPublicKey),
         `OP_DUP OP_HASH160 20 0x98c24d8118bbb6b0baaa5926f441978fca0aea36 OP_EQUAL OP_IF OP_CHECKSIG OP_ELSE OP_DUP OP_HASH160 20 0x2a42558df3ea6f2a438251374d7bd61c81f09f96 OP_EQUALVERIFY OP_OVER 1 0x04 OP_PICK OP_EQUAL OP_NOT OP_VERIFY OP_DUP OP_TOALTSTACK OP_CHECKDATASIGVERIFY OP_FROMALTSTACK OP_CHECKDATASIG OP_ENDIF`
       );
+      // console.log(
+      //   Hash.sha256ripemd160(
+      //     Buffer.from(
+      //       '76a9141d748cb1a0a3a130dcd40a7354d6efadbd74d7b68763ac6776a914242d6642aa70ba0770ea6fca02862fd21c66923f8878010479879169766bbb6cba68',
+      //       'hex'
+      //     )
+      //   ).toString('hex')
+      // );
+      const script = Script.fromHex(
+        '76a9147d2bcc3d5ce46c1b5123ab2ce2d432a4681d489b8763ac6776a914127aaf3caba5cf4f3ff4788337ecd65ef4a28f2d8878010479879169766bbb6cba68'
+        // '76a91459882701171f0e20e46d6f55855a527006c266708763ac67010479a9010479010297647c687ea9010379010296010297647c687ea901027a010496010297647c687ea9147bf7df92647a37be7cf304461bf278c80d19c6358878010479879169766bbb6cba68'
+      );
+      console.log(script.toASM());
     });
   });
 });
