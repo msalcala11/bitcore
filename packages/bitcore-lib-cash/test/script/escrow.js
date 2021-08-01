@@ -5,13 +5,9 @@ const expect = require('chai').expect;
 const bitcore = require('../..');
 
 const Hash = bitcore.crypto.Hash;
-
 const Script = bitcore.Script;
-// const Networks = bitcore.Networks;
-// const Opcode = bitcore.Opcode;
-// const PrivateKey = bitcore.PrivateKey;
 const PublicKey = bitcore.PublicKey;
-// const Address = bitcore.Address;
+
 const Escrow = require('../../lib/script/escrow');
 
 const checkScriptOperations = (operations, expectedScriptString) => {
@@ -113,11 +109,6 @@ describe('Escrow', function() {
       );
     });
     it('should work for nine public keys', () => {
-      // const publicKeyStrings = Array(9)
-      //   .fill()
-      //   .map(() => {
-      //     return new PrivateKey().toPublicKey().toString('hex');
-      //   });
       const publicKeyStrings = [
         '03e1d90a373b55b97fb633868698b2368b343a96b595fdb7ec270be2d3978c754a',
         '03907a5e9d51332a6f0c2b24b3bffff2ab099a3f332aa8f578d1ff64305b44c8de',
@@ -146,19 +137,6 @@ describe('Escrow', function() {
         Escrow.generateRedeemScriptOperations([inputPublicKey], redeemPublicKey),
         `OP_DUP OP_HASH160 20 0x98c24d8118bbb6b0baaa5926f441978fca0aea36 OP_EQUAL OP_IF OP_CHECKSIG OP_ELSE OP_DUP OP_HASH160 20 0x2a42558df3ea6f2a438251374d7bd61c81f09f96 OP_EQUALVERIFY OP_OVER 1 0x04 OP_PICK OP_EQUAL OP_NOT OP_VERIFY OP_DUP OP_TOALTSTACK OP_CHECKDATASIGVERIFY OP_FROMALTSTACK OP_CHECKDATASIG OP_ENDIF`
       );
-      // console.log(
-      //   Hash.sha256ripemd160(
-      //     Buffer.from(
-      //       '76a9141d748cb1a0a3a130dcd40a7354d6efadbd74d7b68763ac6776a914242d6642aa70ba0770ea6fca02862fd21c66923f8878010479879169766bbb6cba68',
-      //       'hex'
-      //     )
-      //   ).toString('hex')
-      // );
-      const script = Script.fromHex(
-        '76a9147d2bcc3d5ce46c1b5123ab2ce2d432a4681d489b8763ac6776a914127aaf3caba5cf4f3ff4788337ecd65ef4a28f2d8878010479879169766bbb6cba68'
-        // '76a91459882701171f0e20e46d6f55855a527006c266708763ac67010479a9010479010297647c687ea9010379010296010297647c687ea901027a010496010297647c687ea9147bf7df92647a37be7cf304461bf278c80d19c6358878010479879169766bbb6cba68'
-      );
-      console.log(script.toASM());
     });
   });
 });
