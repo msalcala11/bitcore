@@ -2081,12 +2081,11 @@ export class API extends EventEmitter {
           const chain = Utils.getChain(txp.coin);
           const currency = txp.coin.toUpperCase();
           const rawTxUnsigned = t_unsigned.uncheckedSerialize();
-          const serializationOpts = {
+          const serializedTx = t.serialize({
             disableSmallFees: true,
             disableLargeFees: true,
             disableDustOutputs: true
-          };
-          const serializedTx = t.serialize(serializationOpts);
+          });
           const unsignedTransactions = [];
           const signedTransactions = [];
 
@@ -2095,14 +2094,6 @@ export class API extends EventEmitter {
             typeof rawTxUnsigned === 'string' ? [rawTxUnsigned] : rawTxUnsigned;
           const serializedTxs =
             typeof serializedTx === 'string' ? [serializedTx] : serializedTx;
-
-          if (txp.escrowReclaimTxp) {
-            const unsignedReclaimTx = Utils.buildTx(txp.escrowReclaimTxp);
-            const reclaimTx = _.cloneDeep(unsignedReclaimTx);
-            this._applyAllSignatures(txp.escrowReclaimTxp, reclaimTx);
-            var rawSignedReclaimTx = reclaimTx.serialize(serializationOpts);
-          }
-          const signedReclaimTransactions = [rawSignedReclaimTx];
 
           const weightedSize = [];
 
@@ -2132,7 +2123,7 @@ export class API extends EventEmitter {
             signedTransactions.push({
               tx: signed,
               weightedSize: weightedSize[i],
-              escrowReclaimTx: signedReclaimTransactions[i]
+              escrowReclaimTx: txp.escrowReclaimTx
             });
             i++;
           }
