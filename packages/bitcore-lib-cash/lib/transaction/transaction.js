@@ -21,9 +21,11 @@ var PublicKeyHashInput = Input.PublicKeyHash;
 var PublicKeyInput = Input.PublicKey;
 var MultiSigScriptHashInput = Input.MultiSigScriptHash;
 var MultiSigInput = Input.MultiSig;
+var EscrowInput = Input.Escrow;
 var Output = require('./output');
 var Script = require('../script');
 var PrivateKey = require('../privatekey');
+var PublicKey = require('../publickey');
 var BN = require('../crypto/bn');
 
 /**
@@ -557,6 +559,28 @@ Transaction.prototype.from = function(utxo, pubkeys, threshold, opts) {
     this._fromNonP2SH(utxo);
   }
   return this;
+};
+
+Transaction.prototype._fromEscrowUtxo = function(utxo, pubkeys) {
+  const publicKeys = pubkeys.map(pubkey => new PublicKey(pubkey));
+  const inputPublicKeys = publicKeys.slice(1);
+  const reclaimPublicKey = publicKeys[0];
+  utxo = new UnspentOutput(utxo);
+  this.addInput(
+    new EscrowInput(
+      {
+        output: new Output({
+          script: utxo.script,
+          satoshis: utxo.satoshis
+        }),
+        prevTxId: utxo.txId,
+        outputIndex: utxo.outputIndex,
+        script: Script.empty()
+      },
+      inputPublicKeys,
+      reclaimPublicKey
+    )
+  );
 };
 
 Transaction.prototype._fromNonP2SH = function(utxo) {
@@ -1219,6 +1243,106 @@ Transaction.prototype.verify = function() {
       }
     }
   }
+  return true;
+};
+
+Transaction.prototype.isZceSecured = function(escrowReclaimTx, requiredEscrowSatoshis, requiredFeeRate) {
+  const allInputsAreP2pkh = this.inputs.every(input => input.script.isPublicKeyHashIn());
+  if (!allInputsAreP2pkh) {
+    return false;
+  }
+
+  const escrowInputIndex = 0;
+
+  let reclaimTx;
+  try {
+    reclaimTx = new Transaction(escrowReclaimTx);
+  } catch (e) {
+    return false;
+  }
+
+  const escrowInput = reclaimTx.inputs[escrowInputIndex];
+
+  if (escrowInput.prevTxId.toString('hex') !== this.id) {
+    return false;
+  }
+
+  const escrowUtxo = this.outputs[escrowInput.outputIndex];
+
+  if (!escrowUtxo) {
+    return false;
+  }
+
+  if (escrowUtxo.toObject().satoshis < requiredEscrowSatoshis) {
+    return false;
+  }
+
+  escrowInput.output = escrowUtxo;
+
+  const reclaimTxSize = escrowReclaimTx.length / 2;
+  const reclaimTxFeeRate = reclaimTx.getFee() / reclaimTxSize;
+
+  if (reclaimTxFeeRate < requiredFeeRate) {
+    return false;
+  }
+
+  const escrowUnlockingScriptParts = escrowInput.script.toASM().split(' ');
+  if (escrowUnlockingScriptParts.length !== 3) {
+    return false;
+  }
+  const [reclaimSignatureString, reclaimPublicKeyString, redeemScriptString] = escrowUnlockingScriptParts;
+  const reclaimPublicKey = new PublicKey(reclaimPublicKeyString);
+  const inputPublicKeys = this.inputs.map(input => new PublicKey(input.script.getPublicKey()));
+  const inputSignatureStrings = this.inputs.map(input => input.script.toASM().split(' ')[0]);
+
+  const allPublicKeysCompressed = [reclaimPublicKey, ...inputPublicKeys].every(publicKey => publicKey.compressed);
+  if (!allPublicKeysCompressed) {
+    return false;
+  }
+
+  const sighashAll = Signature.SIGHASH_ALL | Signature.SIGHASH_FORKID;
+
+  const allSignaturesSighashAll = [reclaimSignatureString, ...inputSignatureStrings].every(signatureString =>
+    signatureString.endsWith(sighashAll.toString(16))
+  );
+  if (!allSignaturesSighashAll) {
+    return false;
+  }
+
+  const correctEscrowRedeemScript = Script.buildEscrowOut(inputPublicKeys, reclaimPublicKey);
+  const correctEscrowRedeemScriptHash = Hash.sha256ripemd160(correctEscrowRedeemScript.toBuffer());
+
+  const escrowUtxoRedeemScriptHash = escrowUtxo.script.getData();
+  const escrowInputRedeemScript = new Script(redeemScriptString);
+  const escrowInputRedeemScriptHash = Hash.sha256ripemd160(escrowInputRedeemScript.toBuffer());
+
+  const allRedeemScriptHashes = [
+    correctEscrowRedeemScriptHash,
+    escrowInputRedeemScriptHash,
+    escrowUtxoRedeemScriptHash
+  ].map(hash => hash.toString('hex'));
+
+  if (!allRedeemScriptHashes.every(hash => hash === allRedeemScriptHashes[0])) {
+    return false;
+  }
+
+  const reclaimSignature = Signature.fromString(reclaimSignatureString);
+  reclaimSignature.nhashtype = sighashAll;
+
+  const reclaimSigValid = reclaimTx.verifySignature(
+    reclaimSignature,
+    reclaimPublicKey,
+    escrowInputIndex,
+    escrowInputRedeemScript,
+    escrowUtxo.satoshisBN,
+    undefined,
+    reclaimSignature.isSchnorr ? 'schnorr' : 'ecdsa'
+  );
+
+  if (!reclaimSigValid) {
+    return false;
+  }
+
   return true;
 };
 
