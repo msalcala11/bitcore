@@ -544,13 +544,12 @@ Transaction.prototype.from = function(utxo, pubkeys, threshold, opts) {
   }
   if (pubkeys && threshold) {
     this._fromMultisigUtxo(utxo, pubkeys, threshold, opts);
+  } else if (utxo.publicKeys && utxo.publicKeys.length > 1) {
+    this._fromEscrowUtxo(utxo, utxo.publicKeys);
   } else {
-    if (utxo.publicKeys && utxo.publicKeys.length > 1) {
-      this._fromEscrowUtxo(utxo, utxo.publicKeys);
-    } else {
-      this._fromNonP2SH(utxo);
-    }
+    this._fromNonP2SH(utxo);
   }
+
   return this;
 };
 
