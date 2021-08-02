@@ -13,7 +13,7 @@ const checkScriptOperations = (operations, expectedScriptString) => {
   script.toString().should.equal(expectedScriptString);
 };
 
-describe.only('Escrow', function() {
+describe('Escrow', function() {
   const zeroHashed = Hash.sha256ripemd160(Buffer.from('0', 'hex'));
   describe('#getMerkleRoot', () => {
     it('should properly hash a 2-level tree of zeros', () => {
