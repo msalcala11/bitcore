@@ -42,7 +42,8 @@ export class Address {
   static Bitcore = {
     btc: require('bitcore-lib'),
     bch: require('bitcore-lib-cash'),
-    doge: require('bitcore-lib-doge')
+    doge: require('bitcore-lib-doge'),
+    ltc: require('bitcore-lib-ltc')
   };
 
   static create(opts) {
@@ -122,7 +123,7 @@ export class Address {
         }
         break;
       case Constants.SCRIPT_TYPES.P2WPKH:
-        bitcoreAddress = Address.Bitcore.btc.Address.fromPublicKey(publicKeys[0], network, 'witnesspubkeyhash');
+        bitcoreAddress = Address.Bitcore[coin].Address.fromPublicKey(publicKeys[0], network, 'witnesspubkeyhash');
         break;
       case Constants.SCRIPT_TYPES.P2PKH:
         $.checkState(
