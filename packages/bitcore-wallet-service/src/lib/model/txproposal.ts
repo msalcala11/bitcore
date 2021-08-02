@@ -28,6 +28,7 @@ export interface ITxProposal {
   payProUrl: string;
   from: string;
   changeAddress: string;
+  escrowAddress: string;
   inputs: any[];
   outputs: Array<{
     amount: number;
@@ -69,6 +70,8 @@ export interface ITxProposal {
   destinationTag?: string;
   invoiceID?: string;
   lockUntilBlockHeight?: number;
+  instantAcceptanceEscrow?: number;
+  allowNotYetBroadcastUtxos?: boolean;
   isTokenSwap?: boolean;
 }
 
@@ -87,6 +90,7 @@ export class TxProposal {
   payProUrl: string;
   from: string;
   changeAddress: any;
+  escrowAddress: any;
   inputs: any[];
   outputs: Array<{
     amount: number;
@@ -130,6 +134,8 @@ export class TxProposal {
   destinationTag?: string;
   invoiceID?: string;
   lockUntilBlockHeight?: number;
+  instantAcceptanceEscrow?: number;
+  allowNotYetBroadcastUtxos?: boolean;
   isTokenSwap?: boolean;
 
   static create(opts) {
@@ -160,10 +166,16 @@ export class TxProposal {
     x.message = opts.message;
     x.payProUrl = opts.payProUrl;
     x.changeAddress = opts.changeAddress;
+    x.escrowAddress = opts.escrowAddress;
+    x.instantAcceptanceEscrow = opts.instantAcceptanceEscrow;
     x.outputs = _.map(opts.outputs, output => {
       return _.pick(output, ['amount', 'toAddress', 'message', 'data', 'gasLimit', 'script']);
     });
-    x.outputOrder = _.range(x.outputs.length + 1);
+    let numOutputs = x.outputs.length + 1;
+    if (x.instantAcceptanceEscrow) {
+      numOutputs = numOutputs + 1;
+    }
+    x.outputOrder = _.range(numOutputs);
     if (!opts.noShuffleOutputs) {
       x.outputOrder = _.shuffle(x.outputOrder);
     }
@@ -175,6 +187,7 @@ export class TxProposal {
     x.feeLevel = opts.feeLevel;
     x.feePerKb = opts.feePerKb;
     x.excludeUnconfirmedUtxos = opts.excludeUnconfirmedUtxos;
+    x.allowNotYetBroadcastUtxos = opts.allowNotYetBroadcastUtxos;
 
     x.addressType = opts.addressType || (x.walletN > 1 ? Constants.SCRIPT_TYPES.P2SH : Constants.SCRIPT_TYPES.P2PKH);
     $.checkState(
@@ -232,6 +245,8 @@ export class TxProposal {
     x.message = obj.message;
     x.payProUrl = obj.payProUrl;
     x.changeAddress = obj.changeAddress;
+    x.escrowAddress = obj.escrowAddress;
+    x.instantAcceptanceEscrow = obj.instantAcceptanceEscrow;
     x.inputs = obj.inputs;
     x.walletM = obj.walletM;
     x.walletN = obj.walletN;
@@ -249,6 +264,7 @@ export class TxProposal {
     x.feeLevel = obj.feeLevel;
     x.feePerKb = obj.feePerKb;
     x.excludeUnconfirmedUtxos = obj.excludeUnconfirmedUtxos;
+    x.allowNotYetBroadcastUtxos = obj.allowNotYetBroadcastUtxos;
     x.addressType = obj.addressType;
     x.customData = obj.customData;
 

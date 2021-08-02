@@ -1514,6 +1514,7 @@ export class API extends EventEmitter {
   // *
   // * @param {Object} opts
   // * @param {Boolean} opts.ignoreMaxGap[=false]
+  // * @param {Boolean} opts.isChange[=false]
   // * @param {Callback} cb
   // * @returns {Callback} cb - Return error or the address
   // */
@@ -2080,11 +2081,12 @@ export class API extends EventEmitter {
           const chain = Utils.getChain(txp.coin);
           const currency = txp.coin.toUpperCase();
           const rawTxUnsigned = t_unsigned.uncheckedSerialize();
-          const serializedTx = t.serialize({
+          const serializationOpts = {
             disableSmallFees: true,
             disableLargeFees: true,
             disableDustOutputs: true
-          });
+          };
+          const serializedTx = t.serialize(serializationOpts);
           const unsignedTransactions = [];
           const signedTransactions = [];
 
@@ -2093,6 +2095,14 @@ export class API extends EventEmitter {
             typeof rawTxUnsigned === 'string' ? [rawTxUnsigned] : rawTxUnsigned;
           const serializedTxs =
             typeof serializedTx === 'string' ? [serializedTx] : serializedTx;
+
+          if (txp.escrowReclaimTxp) {
+            const unsignedReclaimTx = Utils.buildTx(txp.escrowReclaimTxp);
+            const reclaimTx = _.cloneDeep(unsignedReclaimTx);
+            this._applyAllSignatures(txp.escrowReclaimTxp, reclaimTx);
+            var rawSignedReclaimTx = reclaimTx.serialize(serializationOpts);
+          }
+          const signedReclaimTransactions = [rawSignedReclaimTx];
 
           const weightedSize = [];
 
@@ -2121,8 +2131,10 @@ export class API extends EventEmitter {
           for (const signed of serializedTxs) {
             signedTransactions.push({
               tx: signed,
-              weightedSize: weightedSize[i++]
+              weightedSize: weightedSize[i],
+              escrowReclaimTx: signedReclaimTransactions[i]
             });
+            i++;
           }
           PayProV2.verifyUnsignedPayment({
             paymentUrl: txp.payProUrl,
@@ -3190,14 +3202,10 @@ export class API extends EventEmitter {
 
   oneInchGetSwap(data): Promise<any> {
     return new Promise((resolve, reject) => {
-      this.request.post(
-        '/v1/service/oneInch/getSwap',
-        data,
-        (err, data) => {
-          if (err) return reject(err);
-          return resolve(data);
-        }
-      );
+      this.request.post('/v1/service/oneInch/getSwap', data, (err, data) => {
+        if (err) return reject(err);
+        return resolve(data);
+      });
     });
   }
 }
