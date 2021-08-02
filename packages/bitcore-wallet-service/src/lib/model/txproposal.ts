@@ -13,7 +13,7 @@ const Constants = Common.Constants,
   Defaults = Common.Defaults,
   Utils = Common.Utils;
 
-export interface ITxProposal { 
+export interface ITxProposal {
   type: string;
   creatorName: string;
   createdOn: number;
