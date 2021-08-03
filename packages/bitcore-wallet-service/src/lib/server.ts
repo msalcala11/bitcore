@@ -2395,7 +2395,6 @@ export class WalletService {
                     walletM: wallet.m,
                     walletN: wallet.n,
                     excludeUnconfirmedUtxos: !!opts.excludeUnconfirmedUtxos,
-                    allowNotYetBroadcastUtxos: !!opts.allowNotYetBroadcastUtxos,
                     instantAcceptanceEscrow: opts.instantAcceptanceEscrow,
                     validateOutputs: !opts.validateOutputs,
                     addressType: wallet.addressType,

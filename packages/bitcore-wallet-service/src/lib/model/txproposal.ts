@@ -71,7 +71,6 @@ export interface ITxProposal {
   invoiceID?: string;
   lockUntilBlockHeight?: number;
   instantAcceptanceEscrow?: number;
-  allowNotYetBroadcastUtxos?: boolean;
   isTokenSwap?: boolean;
 }
 
@@ -135,7 +134,6 @@ export class TxProposal {
   invoiceID?: string;
   lockUntilBlockHeight?: number;
   instantAcceptanceEscrow?: number;
-  allowNotYetBroadcastUtxos?: boolean;
   isTokenSwap?: boolean;
 
   static create(opts) {
@@ -187,7 +185,6 @@ export class TxProposal {
     x.feeLevel = opts.feeLevel;
     x.feePerKb = opts.feePerKb;
     x.excludeUnconfirmedUtxos = opts.excludeUnconfirmedUtxos;
-    x.allowNotYetBroadcastUtxos = opts.allowNotYetBroadcastUtxos;
 
     x.addressType = opts.addressType || (x.walletN > 1 ? Constants.SCRIPT_TYPES.P2SH : Constants.SCRIPT_TYPES.P2PKH);
     $.checkState(
@@ -264,7 +261,6 @@ export class TxProposal {
     x.feeLevel = obj.feeLevel;
     x.feePerKb = obj.feePerKb;
     x.excludeUnconfirmedUtxos = obj.excludeUnconfirmedUtxos;
-    x.allowNotYetBroadcastUtxos = obj.allowNotYetBroadcastUtxos;
     x.addressType = obj.addressType;
     x.customData = obj.customData;
 

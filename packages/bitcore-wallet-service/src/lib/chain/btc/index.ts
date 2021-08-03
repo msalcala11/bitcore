@@ -496,7 +496,7 @@ export class BtcChain implements IChain {
           return !utxo || utxo.locked;
         });
 
-        if (unavailable && !txp.allowNotYetBroadcastUtxos) return cb(Errors.UNAVAILABLE_UTXOS);
+        if (unavailable) return cb(Errors.UNAVAILABLE_UTXOS);
         return cb();
       }
     );
