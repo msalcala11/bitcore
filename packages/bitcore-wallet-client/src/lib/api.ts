@@ -2122,10 +2122,9 @@ export class API extends EventEmitter {
           for (const signed of serializedTxs) {
             signedTransactions.push({
               tx: signed,
-              weightedSize: weightedSize[i],
+              weightedSize: weightedSize[i++],
               escrowReclaimTx: txp.escrowReclaimTx
             });
-            i++;
           }
           PayProV2.verifyUnsignedPayment({
             paymentUrl: txp.payProUrl,
