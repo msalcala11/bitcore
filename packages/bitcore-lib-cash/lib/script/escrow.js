@@ -26,12 +26,7 @@ const pushOpcodeOrBufferFromNumber = function(n) {
     15: Opcode.OP_15,
     16: Opcode.OP_16
   };
-  if (n >= 0 && n < 17) {
-    return pushOpcodeMap[n];
-  }
-  const hexString = n.toString(16);
-  const fullHexString = `${hexString.length === 1 ? '0' : ''}${hexString}`;
-  return Buffer.from(fullHexString, 'hex');
+  return pushOpcodeMap[n] || Buffer.from(n.toString(16), 'hex');
 };
 
 const getNumMerkleLevels = function(numPublicKeys) {
