@@ -4,7 +4,7 @@ const Hash = require('../crypto/hash');
 const Opcode = require('../opcode');
 const PublicKey = require('../publickey');
 
-// This file implements the Zero-Conf Forfeit scripts defined here: 
+// This file implements the Zero-Conf Escrow scripts defined here: 
 // https://ide.bitauth.com/import-gist/104baff7503d6a7ad619ad814153b059
 
 const Escrow = {};
