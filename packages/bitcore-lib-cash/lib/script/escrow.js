@@ -6,9 +6,28 @@ const PublicKey = require('../publickey');
 
 const Escrow = {};
 
-const bufferFromNumber = function(n) {
-  if (n === 0) {
-    return Buffer.alloc(0);
+const pushOpcodeOrBufferFromNumber = function(n) {
+  const pushOpcodeMap = {
+    0: Opcode.OP_0,
+    1: Opcode.OP_1,
+    2: Opcode.OP_2,
+    3: Opcode.OP_3,
+    4: Opcode.OP_4,
+    5: Opcode.OP_5,
+    6: Opcode.OP_6,
+    7: Opcode.OP_7,
+    8: Opcode.OP_8,
+    9: Opcode.OP_9,
+    10: Opcode.OP_10,
+    11: Opcode.OP_11,
+    12: Opcode.OP_12,
+    13: Opcode.OP_13,
+    14: Opcode.OP_14,
+    15: Opcode.OP_15,
+    16: Opcode.OP_16
+  };
+  if (n >= 0 && n < 17) {
+    return pushOpcodeMap[n];
   }
   const hexString = n.toString(16);
   const fullHexString = `${hexString.length === 1 ? '0' : ''}${hexString}`;
@@ -34,7 +53,7 @@ Escrow.generateMerkleRootFromPublicKeys = function(publicKeys) {
     .map(publicKey => publicKey.toString('hex'))
     .sort()
     .map(publicKeyString => PublicKey.fromString(publicKeyString).toBuffer());
-  const zeros = Array(numItems - publicKeys.length).fill(bufferFromNumber(0));
+  const zeros = Array(numItems - publicKeys.length).fill(Buffer.alloc(0));
   const leaves = sortedPublicKeys.concat(zeros).map(value => Hash.sha256ripemd160(value));
   return Escrow.getMerkleRoot(leaves);
 };
@@ -48,28 +67,18 @@ const generateMerkleBasedInputPublicKeyValidationOperations = function(inputPubl
   const numLevels = getNumMerkleLevels(inputPublicKeys.length);
   const rootHash = Escrow.generateMerkleRootFromPublicKeys(inputPublicKeys);
   const merkleTreeConstructionOperationsForEachLevel = Array(numLevels)
-    .fill()
-    .map((_, levelIndex) => {
-      const leafIndexStackDepth = numLevels + 1 - levelIndex;
-      const leafIndexOpCode = levelIndex === numLevels - 1 ? Opcode.OP_ROLL : Opcode.OP_PICK;
-      const divisor = Math.pow(2, levelIndex);
-      const computeParentIndex = levelIndex > 0 ? [bufferFromNumber(divisor), Opcode.OP_DIV] : [];
-      return [
-        bufferFromNumber(leafIndexStackDepth),
-        leafIndexOpCode,
-        ...computeParentIndex,
-        bufferFromNumber(2),
-        Opcode.OP_MOD,
-        Opcode.OP_NOTIF,
-        Opcode.OP_SWAP,
-        Opcode.OP_ENDIF,
-        Opcode.OP_CAT,
-        Opcode.OP_HASH160
-      ];
-    })
+    .fill([
+      Opcode.OP_FROMALTSTACK,
+      Opcode.OP_IF,
+      Opcode.OP_SWAP,
+      Opcode.OP_ENDIF,
+      Opcode.OP_CAT,
+      Opcode.OP_HASH160
+    ])
     .reduce((arr, item) => arr.concat(item), []);
   return [
-    bufferFromNumber(numLevels + 1),
+    ...Array(numLevels).fill(Opcode.OP_TOALTSTACK),
+    pushOpcodeOrBufferFromNumber(numLevels),
     Opcode.OP_PICK,
     Opcode.OP_HASH160,
     ...merkleTreeConstructionOperationsForEachLevel,
@@ -98,7 +107,7 @@ Escrow.generateRedeemScriptOperations = function(inputPublicKeys, reclaimPublicK
   const checkInputPublicKey = Escrow.generateInputPublicKeyValidationOperations(inputPublicKeys);
   const ensureTransactionsAreUnique = [
     Opcode.OP_OVER,
-    bufferFromNumber(4),
+    Opcode.OP_4,
     Opcode.OP_PICK,
     Opcode.OP_EQUAL,
     Opcode.OP_NOT,
