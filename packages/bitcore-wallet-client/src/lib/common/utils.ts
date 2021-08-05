@@ -166,7 +166,15 @@ export class Utils {
     return { _input, addressIndex, isChange };
   }
 
-  static deriveAddress(scriptType, publicKeyRing, path, m, network, coin) {
+  static deriveAddress(
+    scriptType,
+    publicKeyRing,
+    path,
+    m,
+    network,
+    coin,
+    escrowInputs?
+  ) {
     $.checkArgument(_.includes(_.values(Constants.SCRIPT_TYPES), scriptType));
 
     coin = coin || 'btc';
@@ -190,7 +198,24 @@ export class Utils {
         );
         break;
       case Constants.SCRIPT_TYPES.P2SH:
-        bitcoreAddress = bitcore.Address.createMultisig(publicKeys, m, network);
+        if (escrowInputs) {
+          var xpub = new bitcore.HDPublicKey(publicKeyRing[0].xPubKey);
+          const inputPublicKeys = escrowInputs.map(
+            input => xpub.deriveChild(input.path).publicKey
+          );
+          bitcoreAddress = bitcore.Address.createEscrow(
+            inputPublicKeys,
+            publicKeys[0],
+            network
+          );
+          publicKeys = [publicKeys[0], ...inputPublicKeys];
+        } else {
+          bitcoreAddress = bitcore.Address.createMultisig(
+            publicKeys,
+            m,
+            network
+          );
+        }
         break;
       case Constants.SCRIPT_TYPES.P2WPKH:
         bitcoreAddress = bitcore.Address.fromPublicKey(
@@ -363,6 +388,10 @@ export class Utils {
         });
       }
 
+      if (txp.instantAcceptanceEscrow && txp.escrowAddress) {
+        t.to(txp.escrowAddress.address, txp.instantAcceptanceEscrow);
+      }
+
       t.fee(txp.fee);
       t.change(txp.changeAddress.address);
 
@@ -431,7 +460,6 @@ export class Utils {
         recipients[0].data = data;
       }
       const unsignedTxs = [];
-      // If it is a token swap its an already created ERC20 transaction so we skip it and go directly to ETH transaction create
       const isERC20 = tokenAddress && !payProUrl && !isTokenSwap;
       const isETHMULTISIG = multisigContractAddress;
       // using ETH as default since getChain returns undefined for custom tokens
