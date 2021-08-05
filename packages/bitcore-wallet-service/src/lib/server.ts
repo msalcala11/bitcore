@@ -1309,7 +1309,7 @@ export class WalletService {
     const createNewAddress = (wallet, cb) => {
       let address;
       try {
-        address = wallet.createAddress(false);
+        address = wallet.createAddress(!!opts.isChange);
       } catch (e) {
         this.logw('Error creating address', e);
         return cb('Bad xPub');
@@ -1518,21 +1518,79 @@ export class WalletService {
             if (err) return next(err);
 
             const dustThreshold = Bitcore_[wallet.coin].Transaction.DUST_AMOUNT;
-            bc.getUtxos(wallet, height, (err, utxos) => {
+            const isEscrowPayment = wallet.isZceCompatible() && opts.instantAcceptanceEscrow ? true : false;
+            bc.getUtxos(wallet, height, { includeSpent: isEscrowPayment }, (err, utxos) => {
               if (err) return next(err);
               if (utxos.length == 0) return cb(null, []);
 
-              // filter out DUST
-              allUtxos = _.filter(utxos, x => {
-                return x.satoshis >= dustThreshold;
-              });
+              let unusableAddresses = [];
+              if (isEscrowPayment) {
+                const unusableUtxos = utxos.filter(utxo => utxo.spent || utxo.address.startsWith('p'));
+                unusableAddresses = unusableUtxos.map(utxo => utxo.address);
+              }
 
-              utxoIndex = _.keyBy(allUtxos, utxoKey);
+              allUtxos = utxos.filter(x => x.satoshis >= dustThreshold && !unusableAddresses.includes(x.address));
+
               return next();
             });
           });
         },
         next => {
+          if (!wallet.isZceCompatible()) return next();
+
+          // Ensure no UTXOs which originate from addresses previously used to fund a ZCE-secured
+          // payment for which the ZCE escrow reclaim tx has not yet confirmed can be used to fund
+          // any subsequent transactions until the escrow reclaim tx confirms.
+
+          const unconfirmedUtxos = _.filter(allUtxos, x => !x.confirmations);
+          const escrowUtxos = _.filter(allUtxos, x => x.address.startsWith('p'));
+
+          let unreclaimedEscrowCoins = [...escrowUtxos];
+          let lockedAddresses = [];
+
+          async.each(
+            unconfirmedUtxos,
+            (utxo: any, next) => {
+              this.getCoinsForTx({ txId: utxo.txid }, (err, coins) => {
+                if (err) return next(err);
+                const escrowCoins = coins.inputs.filter(input => input.address.startsWith('p'));
+                unreclaimedEscrowCoins = unreclaimedEscrowCoins.concat(escrowCoins);
+                if (escrowCoins.length) {
+                  lockedAddresses.push(utxo.address);
+                }
+                return next();
+              });
+            },
+            err => {
+              if (err) return next(err);
+              async.each(
+                unreclaimedEscrowCoins,
+                (utxo: any, next) => {
+                  const txId = utxo.txid || utxo.mintTxid;
+                  this.getCoinsForTx({ txId }, (err, coins) => {
+                    if (err) return next(err);
+                    const inputAddresses = coins.inputs.map(input => input.address);
+                    lockedAddresses = lockedAddresses.concat(inputAddresses);
+                    return next();
+                  });
+                },
+                err => {
+                  if (err) return next(err);
+                  allUtxos = allUtxos.map(utxo => {
+                    if (lockedAddresses.includes(utxo.address)) {
+                      utxo.locked = true;
+                    }
+                    return utxo;
+                  });
+                  return next();
+                }
+              );
+            }
+          );
+        },
+        next => {
+          utxoIndex = _.keyBy(allUtxos, utxoKey);
+
           this.getPendingTxs({}, (err, txps) => {
             if (err) return next(err);
 
@@ -2341,6 +2399,7 @@ export class WalletService {
                     walletM: wallet.m,
                     walletN: wallet.n,
                     excludeUnconfirmedUtxos: !!opts.excludeUnconfirmedUtxos,
+                    instantAcceptanceEscrow: opts.instantAcceptanceEscrow,
                     validateOutputs: !opts.validateOutputs,
                     addressType: wallet.addressType,
                     customData: opts.customData,
@@ -2364,6 +2423,18 @@ export class WalletService {
                 },
                 next => {
                   return ChainService.selectTxInputs(this, txp, wallet, opts, next);
+                },
+                async next => {
+                  if (!wallet.isZceCompatible() || !opts.instantAcceptanceEscrow) return next();
+                  try {
+                    opts.inputs = txp.inputs;
+                    const escrowAddress = await ChainService.getChangeAddress(this, wallet, opts);
+                    txp.escrowAddress = escrowAddress;
+                  } catch (error) {
+                    return next(error);
+                  }
+                  if (opts.dryRun) return next();
+                  this._store(wallet, txp.escrowAddress, next, true);
                 },
                 next => {
                   if (!changeAddress || wallet.singleAddress || opts.dryRun || opts.changeAddress) return next();
@@ -4893,7 +4964,16 @@ export class WalletService {
     return new Promise((resolve, reject) => {
       const credentials = this.oneInchGetCredentials();
 
-      if (!checkRequired(req.body, ['fromTokenAddress', 'toTokenAddress', 'amount', 'fromAddress', 'slippage', 'destReceiver'])) {
+      if (
+        !checkRequired(req.body, [
+          'fromTokenAddress',
+          'toTokenAddress',
+          'amount',
+          'fromAddress',
+          'slippage',
+          'destReceiver'
+        ])
+      ) {
         return reject(new ClientError('oneInchGetSwap request missing arguments'));
       }
 
@@ -4909,8 +4989,8 @@ export class WalletService {
       qs.push('slippage=' + req.body.slippage);
       qs.push('destReceiver=' + req.body.destReceiver);
 
-      if(credentials.referrerFee) qs.push('fee=' + credentials.referrerFee);
-      if(credentials.referrerAddress) qs.push('referrerAddress=' + credentials.referrerAddress);
+      if (credentials.referrerFee) qs.push('fee=' + credentials.referrerFee);
+      if (credentials.referrerAddress) qs.push('referrerAddress=' + credentials.referrerAddress);
 
       const URL: string = credentials.API + '/v3.0/1/swap/?' + qs.join('&');
 

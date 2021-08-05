@@ -1514,6 +1514,7 @@ export class API extends EventEmitter {
   // *
   // * @param {Object} opts
   // * @param {Boolean} opts.ignoreMaxGap[=false]
+  // * @param {Boolean} opts.isChange[=false]
   // * @param {Callback} cb
   // * @returns {Callback} cb - Return error or the address
   // */
@@ -2121,7 +2122,8 @@ export class API extends EventEmitter {
           for (const signed of serializedTxs) {
             signedTransactions.push({
               tx: signed,
-              weightedSize: weightedSize[i++]
+              weightedSize: weightedSize[i++],
+              escrowReclaimTx: txp.escrowReclaimTx
             });
           }
           PayProV2.verifyUnsignedPayment({
@@ -3190,14 +3192,10 @@ export class API extends EventEmitter {
 
   oneInchGetSwap(data): Promise<any> {
     return new Promise((resolve, reject) => {
-      this.request.post(
-        '/v1/service/oneInch/getSwap',
-        data,
-        (err, data) => {
-          if (err) return reject(err);
-          return resolve(data);
-        }
-      );
+      this.request.post('/v1/service/oneInch/getSwap', data, (err, data) => {
+        if (err) return reject(err);
+        return resolve(data);
+      });
     });
   }
 }
