@@ -1538,6 +1538,10 @@ export class WalletService {
         next => {
           if (!wallet.isZceCompatible()) return next();
 
+          // Ensure no UTXOs which originate from addresses previously used to fund a ZCE-secured
+          // payment for which the ZCE escrow reclaim tx has not yet confirmed can be used to fund 
+          // any subsequent transactions until the escrow reclaim tx confirms.
+
           const unconfirmedUtxos = _.filter(allUtxos, x => !x.confirmations);
           const escrowUtxos = _.filter(allUtxos, x => x.address.startsWith('p'));
 
