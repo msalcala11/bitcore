@@ -166,7 +166,15 @@ export class Utils {
     return { _input, addressIndex, isChange };
   }
 
-  static deriveAddress(scriptType, publicKeyRing, path, m, network, coin) {
+  static deriveAddress(
+    scriptType,
+    publicKeyRing,
+    path,
+    m,
+    network,
+    coin,
+    escrowInputs?
+  ) {
     $.checkArgument(_.includes(_.values(Constants.SCRIPT_TYPES), scriptType));
 
     coin = coin || 'btc';
@@ -190,7 +198,24 @@ export class Utils {
         );
         break;
       case Constants.SCRIPT_TYPES.P2SH:
-        bitcoreAddress = bitcore.Address.createMultisig(publicKeys, m, network);
+        if (escrowInputs) {
+          var xpub = new bitcore.HDPublicKey(publicKeyRing[0].xPubKey);
+          const inputPublicKeys = escrowInputs.map(
+            input => xpub.deriveChild(input.path).publicKey
+          );
+          bitcoreAddress = bitcore.Address.createEscrow(
+            inputPublicKeys,
+            publicKeys[0],
+            network
+          );
+          publicKeys = [publicKeys[0], ...inputPublicKeys];
+        } else {
+          bitcoreAddress = bitcore.Address.createMultisig(
+            publicKeys,
+            m,
+            network
+          );
+        }
         break;
       case Constants.SCRIPT_TYPES.P2WPKH:
         bitcoreAddress = bitcore.Address.fromPublicKey(
@@ -361,6 +386,10 @@ export class Utils {
             t.to(o.toAddress, o.amount);
           }
         });
+      }
+
+      if (txp.instantAcceptanceEscrow && txp.escrowAddress) {
+        t.to(txp.escrowAddress.address, txp.instantAcceptanceEscrow + txp.fee);
       }
 
       t.fee(txp.fee);
