@@ -745,6 +745,36 @@ Transaction.prototype.change = function(address) {
   return this;
 };
 
+/**
+ * Set the escrow address for this transaction
+ *
+ * @param {Address} address An address for change to be sent to.
+ * @param {number} instantAcceptanceEscrow The instantAcceptanceEscrow requested by the merchant
+ * @param {minRelayFeePerKb} minRelayFeePerKb The prevailing minimum relay fee rate (in satoshis / Kb) on the BCH network
+ * @return {Transaction} this, for chaining
+ */
+ Transaction.prototype.escrow = function(address, instantAcceptanceEscrow, minRelayFeePerKb) {
+  $.checkArgument(address, 'address is required');
+  $.checkArgument(instantAcceptanceEscrow, 'instantAcceptanceEscrow is required');
+  $.checkArgument(minRelayFeePerKb, 'minRelayFeePerKb is required');
+  const baseTxSize = 10;
+  const schnorrP2pkhInputSize = 141;
+  const p2pkhOutSize = 34;
+  const txSize = baseTxSize + (schnorrP2pkhInputSize * this.inputs.length) + p2pkhOutSize;
+  const escrowOutputSize = 32;
+  const changeOutputSize = p2pkhOutSize;
+  const satoshisPerByte = minRelayFeePerKb / 1000;
+  const minRelayFeeWithoutChange = (txSize + escrowOutputSize) * satoshisPerByte;
+  const minRelayFeeWithChange = (txSize + escrowOutputSize + changeOutputSize) * satoshisPerByte;
+  const totalSendAmountWithoutChange = this.getFee() + instantAcceptanceEscrow + this._getOutputAmount() + minRelayFeeWithoutChange;
+  const hasChange = this._getInputAmount() - totalSendAmountWithoutChange > this.DUST_AMOUNT;
+  const minRelayFee = hasChange ? minRelayFeeWithChange : minRelayFeeWithoutChange;
+  const escrowAmount = instantAcceptanceEscrow + minRelayFee;
+  this.to(address, escrowAmount);
+  this._fee = undefined;
+  return this;
+};
+
 
 /**
  * @return {Output} change output, if it exists
@@ -1282,9 +1312,12 @@ Transaction.prototype.isZceSecured = function(escrowReclaimTx, instantAcceptance
   }
 
   // The escrow address must contain the instantAcceptanceEscrow satoshis specified
-  // by the merchant plus the miner fee on the ZCE-secured payment.
+  // by the merchant plus the minimum required miner fee on the ZCE-secured payment.
   // Rationale: https://github.com/bitjson/bch-zce#zce-extension-to-json-payment-protocol
-  if (escrowUtxo.toObject().satoshis < instantAcceptanceEscrow + this.getFee()) {
+  const zceRawTx = this.uncheckedSerialize();
+  const zceTxSize = zceRawTx.length / 2;
+  const minFee = zceTxSize * requiredFeeRate;
+  if (escrowUtxo.toObject().satoshis < instantAcceptanceEscrow + minFee) {
     return false;
   }
 

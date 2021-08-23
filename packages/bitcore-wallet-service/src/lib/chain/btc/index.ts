@@ -383,11 +383,11 @@ export class BtcChain implements IChain {
       }
     });
 
-    if (txp.instantAcceptanceEscrow && txp.escrowAddress) {
-      t.to(txp.escrowAddress.address, txp.instantAcceptanceEscrow + txp.fee);
-    }
-
     t.fee(txp.fee);
+
+    if (txp.instantAcceptanceEscrow && txp.escrowAddress) {
+      t.escrow(txp.escrowAddress.address, txp.instantAcceptanceEscrow, txp.feePerKb);
+    }
 
     if (txp.changeAddress) {
       t.change(txp.changeAddress.address);

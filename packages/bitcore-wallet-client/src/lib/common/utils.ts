@@ -388,11 +388,16 @@ export class Utils {
         });
       }
 
+      t.fee(txp.fee);
+
       if (txp.instantAcceptanceEscrow && txp.escrowAddress) {
-        t.to(txp.escrowAddress.address, txp.instantAcceptanceEscrow + txp.fee);
+        t.escrow(
+          txp.escrowAddress.address,
+          txp.instantAcceptanceEscrow,
+          txp.feePerKb
+        );
       }
 
-      t.fee(txp.fee);
       t.change(txp.changeAddress.address);
 
       // Shuffle outputs for improved privacy
