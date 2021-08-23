@@ -747,6 +747,10 @@ Transaction.prototype.change = function(address) {
 
 /**
  * Set the escrow address for this transaction
+ * 
+ * The escrow address must contain the instantAcceptanceEscrow satoshis specified
+ * by the merchant plus the minimum required miner fee on the ZCE-secured payment.
+ * Rationale: https://github.com/bitjson/bch-zce#zce-extension-to-json-payment-protocol
  *
  * @param {Address} address An address for change to be sent to.
  * @param {number} instantAcceptanceEscrow The instantAcceptanceEscrow requested by the merchant
@@ -754,22 +758,29 @@ Transaction.prototype.change = function(address) {
  * @return {Transaction} this, for chaining
  */
  Transaction.prototype.escrow = function(address, instantAcceptanceEscrow, minRelayFeePerKb) {
+  $.checkArgument(this.inputs.length > 0, 'inputs must have already been set when setting escrow');
+  $.checkArgument(this.outputs.length > 0, 'non-change outputs must have already been set when setting escrow');
+  $.checkArgument(!this.getChangeOutput(), 'change must be still be unset when setting escrow');
   $.checkArgument(address, 'address is required');
   $.checkArgument(instantAcceptanceEscrow, 'instantAcceptanceEscrow is required');
   $.checkArgument(minRelayFeePerKb, 'minRelayFeePerKb is required');
-  const baseTxSize = 10;
-  const schnorrP2pkhInputSize = 141;
-  const p2pkhOutSize = 34;
-  const txSize = baseTxSize + (schnorrP2pkhInputSize * this.inputs.length) + p2pkhOutSize;
+
   const escrowOutputSize = 32;
-  const changeOutputSize = p2pkhOutSize;
+  const changeOutputSize = 34;
+  const txSize = this._estimateSize();
   const satoshisPerByte = minRelayFeePerKb / 1000;
-  const minRelayFeeWithoutChange = (txSize + escrowOutputSize) * satoshisPerByte;
-  const minRelayFeeWithChange = (txSize + escrowOutputSize + changeOutputSize) * satoshisPerByte;
-  const totalSendAmountWithoutChange = this.getFee() + instantAcceptanceEscrow + this._getOutputAmount() + minRelayFeeWithoutChange;
+
+  const finalTxSizeWithoutChange = txSize + escrowOutputSize;
+  const minRelayFeeWithoutChange = finalTxSizeWithoutChange * satoshisPerByte;
+  const minEscrowWithoutChange = instantAcceptanceEscrow + minRelayFeeWithoutChange;
+  const totalSendAmountWithoutChange = this._getOutputAmount() + this.getFee() + minEscrowWithoutChange;
+
   const hasChange = this._getInputAmount() - totalSendAmountWithoutChange > this.DUST_AMOUNT;
+  const finalTxSizeWithChange = finalTxSizeWithoutChange + changeOutputSize;
+  const minRelayFeeWithChange = finalTxSizeWithChange * satoshisPerByte;
   const minRelayFee = hasChange ? minRelayFeeWithChange : minRelayFeeWithoutChange;
   const escrowAmount = instantAcceptanceEscrow + minRelayFee;
+
   this.to(address, escrowAmount);
   this._fee = undefined;
   return this;
