@@ -53,8 +53,12 @@ export class Verifier {
       escrowInputs,
       credentials.hardwareSourcePublicKey
     );
+    
+    // Strip network suffix from address if present
+    const addressToCompare = address.address.split(':')[0];
+    
     return (
-      local.address == address.address &&
+      local.address === addressToCompare &&
       _.difference(local.publicKeys, address.publicKeys).length === 0
     );
   }
