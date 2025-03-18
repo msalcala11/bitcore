@@ -1548,6 +1548,7 @@ export class WalletService implements IWalletService {
         address,
         (err, duplicate) => {
           if (err) return cb(err);
+          ChainService.addressFromStorageTransform(wallet.chain, wallet.network, address);
           if (duplicate) return cb(null, address);
           if (wallet.chain == 'bch' && opts.noCashAddr) {
             address = _.cloneDeep(address);
