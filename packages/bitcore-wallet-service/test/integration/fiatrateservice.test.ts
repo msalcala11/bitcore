@@ -237,6 +237,19 @@ describe('Fiat rate service', function() {
       clock.restore();
     });
 
+    it('should fail when requesting more than 100 timestamps', async function() {
+      const ts = Array.from({ length: 101 }, (_, i) => i + 1);
+      try {
+        await util.promisify(service.getRate).call(service, {
+          code: 'USD',
+          ts
+        });
+        throw new Error('Expected getRate to fail for too many timestamps');
+      } catch (err) {
+        err.should.exist;
+      }
+    });
+
     it('should get historical rates from ts to now', async function() {
       const coins = ['btc', 'bch', 'eth', 'matic', 'xrp', 'doge', 'ltc'];
       const clock = sinon.useFakeTimers({ toFake: ['Date'] });

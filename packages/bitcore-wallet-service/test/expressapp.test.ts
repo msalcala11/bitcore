@@ -88,6 +88,26 @@ describe('ExpressApp', function() {
         });
       });
 
+      it('returns 400 when too many timestamps are provided to /v1/fiatrates/:code/', function(done) {
+        const server = {
+          getFiatRate: sinon.stub().callsArgWith(1, null, {})
+        };
+        sandbox.stub(WalletService, 'initialize').callsArg(1);
+        sandbox.stub(WalletService, 'getInstance').returns(server);
+        start(ExpressApp, function() {
+          const ts = Array.from({ length: 101 }, (_, i) => i + 1).join(',');
+          const requestOptions = {
+            url: `${testHost}:${testPort}${config.basePath}/v1/fiatrates/USD?ts=${ts}`
+          };
+          request(requestOptions, function(err, res) {
+            should.not.exist(err);
+            res.statusCode.should.equal(400);
+            should.not.exist(server.getFiatRate.getCalls()[0]);
+            done();
+          });
+        });
+      });
+
       it('/v1/addresses', function(done) {
         const server = {
           getAddresses: sinon.stub().callsArgWith(1, null, {}),
@@ -235,6 +255,50 @@ describe('ExpressApp', function() {
             args.feePerKb.should.equal(10000);
             args.returnInputs.should.be.true;
             JSON.parse(body).amount.should.equal(123);
+            done();
+          });
+        });
+      });
+
+      it('parses comma-separated timestamps for /v1/fiatrates/:code/', function(done) {
+        const server = {
+          getFiatRate: sinon.stub().callsArgWith(1, null, {})
+        };
+        sandbox.stub(WalletService, 'initialize').callsArg(1);
+        sandbox.stub(WalletService, 'getInstance').returns(server);
+        start(ExpressApp, function() {
+          const requestOptions = {
+            url: `${testHost}:${testPort}${config.basePath}/v1/fiatrates/USD?coin=bch&ts=100,200`
+          };
+          request(requestOptions, function(err, res) {
+            should.not.exist(err);
+            res.statusCode.should.equal(200);
+            const args = server.getFiatRate.getCalls()[0].args[0];
+            args.code.should.equal('USD');
+            args.coin.should.equal('bch');
+            args.ts.should.deep.equal([100, 200]);
+            done();
+          });
+        });
+      });
+
+      it('parses repeated timestamps for /v1/fiatrates/:code/', function(done) {
+        const server = {
+          getFiatRate: sinon.stub().callsArgWith(1, null, {})
+        };
+        sandbox.stub(WalletService, 'initialize').callsArg(1);
+        sandbox.stub(WalletService, 'getInstance').returns(server);
+        start(ExpressApp, function() {
+          const requestOptions = {
+            url: `${testHost}:${testPort}${config.basePath}/v1/fiatrates/EUR?ts=100&ts=200`
+          };
+          request(requestOptions, function(err, res) {
+            should.not.exist(err);
+            res.statusCode.should.equal(200);
+            const args = server.getFiatRate.getCalls()[0].args[0];
+            args.code.should.equal('EUR');
+            args.coin.should.equal('btc');
+            args.ts.should.deep.equal([100, 200]);
             done();
           });
         });

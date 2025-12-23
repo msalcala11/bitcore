@@ -247,6 +247,7 @@ export const Defaults = {
   FIAT_RATE_PROVIDER: 'BitPay',
   FIAT_RATE_FETCH_INTERVAL: 10, // In minutes
   FIAT_RATE_MAX_LOOK_BACK_TIME: 120, // In minutes
+  FIAT_RATE_MAX_TIMESTAMP_PARAMS: 100,
 
   HISTORY_LIMIT: 1001,
 

@@ -2,6 +2,7 @@ import * as async from 'async';
 import preconditions from 'preconditions';
 import * as request from 'request';
 import { Common } from './common';
+import { ClientError } from './errors/clienterror';
 import { providers } from './fiatrateproviders';
 import logger from './logger';
 import { Storage } from './storage';
@@ -131,6 +132,9 @@ export class FiatRateService {
     let coin = opts.coin || 'btc';
     //    const provider = opts.provider || this.defaultProvider;
     const ts = !isNaN(opts.ts) || Array.isArray(opts.ts) ? opts.ts : now;
+    const { FIAT_RATE_MAX_TIMESTAMP_PARAMS } = Common.Defaults;
+    if (Array.isArray(ts) && ts.length > FIAT_RATE_MAX_TIMESTAMP_PARAMS)
+      return cb(new ClientError(`Too many timestamps (max ${FIAT_RATE_MAX_TIMESTAMP_PARAMS})`));
 
     async.map(
       [].concat(ts),
