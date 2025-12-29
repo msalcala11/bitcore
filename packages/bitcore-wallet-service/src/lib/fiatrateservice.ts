@@ -171,6 +171,22 @@ export class FiatRateService {
 
     opts = opts || {};
 
+    if (Array.isArray(opts.ts)) {
+      if (!opts.code) return cb(new ClientError('code is required when requesting multiple timestamps'));
+      const tsList = opts.ts;
+      return async.mapLimit(
+        tsList,
+        5,
+        (ts: number, next) => {
+          this.getRates({ ...opts, ts }, (err, rates) => {
+            if (err) return next(err);
+            return next(null, { ts: +ts, rates });
+          });
+        },
+        cb
+      );
+    }
+
     const now = Date.now();
     const ts = opts.ts ? opts.ts : now;
     let fiatFiltered = [];

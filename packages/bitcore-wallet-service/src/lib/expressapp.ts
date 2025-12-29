@@ -1398,10 +1398,47 @@ export class ExpressApp {
     router.get('/v3/fiatrates/', (req, res) => {
       SetPublicCache(res, 5 * ONE_MINUTE);
       let server: WalletService;
-      const opts = {
-        code: req.query.code || null,
-        ts: req.query.ts ? +req.query.ts : null
+      const { FIAT_RATE_MAX_TIMESTAMP_PARAMS } = Defaults;
+      const parseTimestamps = (tsParam: string | string[]) => {
+        if (!tsParam) return null;
+
+        const toNumbers = (values: (string | number)[]) => {
+          const parsed = values.map(v => +v);
+          if (parsed.some(v => isNaN(v))) throw new ClientError('Invalid timestamp');
+          return parsed;
+        };
+
+        if (Array.isArray(tsParam)) {
+          const parsed = toNumbers(tsParam);
+          if (parsed.length > FIAT_RATE_MAX_TIMESTAMP_PARAMS)
+            throw new ClientError(`Too many timestamps (max ${FIAT_RATE_MAX_TIMESTAMP_PARAMS})`);
+          return parsed.length === 1 ? parsed[0] : parsed;
+        }
+
+        if (typeof tsParam === 'string' && tsParam.includes(',')) {
+          const parsed = toNumbers(tsParam.split(','));
+          if (parsed.length > FIAT_RATE_MAX_TIMESTAMP_PARAMS)
+            throw new ClientError(`Too many timestamps (max ${FIAT_RATE_MAX_TIMESTAMP_PARAMS})`);
+          return parsed.length === 1 ? parsed[0] : parsed;
+        }
+
+        const single = +tsParam;
+        if (isNaN(single)) throw new ClientError('Invalid timestamp');
+        return single;
       };
+
+      let opts;
+      try {
+        opts = {
+          code: req.query.code || null,
+          ts: req.query.ts ? parseTimestamps(req.query.ts as any) : null
+        };
+        if (Array.isArray(opts.ts) && !opts.code) {
+          throw new ClientError('code is required when requesting multiple timestamps');
+        }
+      } catch (err) {
+        return returnError(err, res, req);
+      }
       try {
         server = getServer(req, res);
       } catch (ex) {

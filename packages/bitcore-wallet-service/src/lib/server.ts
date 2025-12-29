@@ -4769,7 +4769,12 @@ export class WalletService implements IWalletService {
    * @returns {Array} rates - The exchange rate.
    */
   getFiatRates(opts, cb) {
-    if (isNaN(opts.ts) || Array.isArray(opts.ts)) return cb(new ClientError('Invalid timestamp'));
+    const ts = opts.ts;
+    if (Array.isArray(ts)) {
+      if (ts.some(v => isNaN(v))) return cb(new ClientError('Invalid timestamp'));
+    } else if (ts != null && isNaN(ts)) {
+      return cb(new ClientError('Invalid timestamp'));
+    }
 
     this.fiatRateService.getRates(opts, (err, rates) => {
       if (err) return cb(err);

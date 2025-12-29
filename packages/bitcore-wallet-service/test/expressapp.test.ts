@@ -304,6 +304,67 @@ describe('ExpressApp', function() {
         });
       });
 
+      it('parses comma-separated timestamps for /v3/fiatrates/ when code is provided', function(done) {
+        const server = {
+          getFiatRates: sinon.stub().callsArgWith(1, null, {})
+        };
+        sandbox.stub(WalletService, 'initialize').callsArg(1);
+        sandbox.stub(WalletService, 'getInstance').returns(server);
+        start(ExpressApp, function() {
+          const requestOptions = {
+            url: `${testHost}:${testPort}${config.basePath}/v3/fiatrates/?code=USD&ts=100,200`
+          };
+          request(requestOptions, function(err, res) {
+            should.not.exist(err);
+            res.statusCode.should.equal(200);
+            const args = server.getFiatRates.getCalls()[0].args[0];
+            args.code.should.equal('USD');
+            args.ts.should.deep.equal([100, 200]);
+            done();
+          });
+        });
+      });
+
+      it('parses repeated timestamps for /v3/fiatrates/ when code is provided', function(done) {
+        const server = {
+          getFiatRates: sinon.stub().callsArgWith(1, null, {})
+        };
+        sandbox.stub(WalletService, 'initialize').callsArg(1);
+        sandbox.stub(WalletService, 'getInstance').returns(server);
+        start(ExpressApp, function() {
+          const requestOptions = {
+            url: `${testHost}:${testPort}${config.basePath}/v3/fiatrates/?code=USD&ts=100&ts=200`
+          };
+          request(requestOptions, function(err, res) {
+            should.not.exist(err);
+            res.statusCode.should.equal(200);
+            const args = server.getFiatRates.getCalls()[0].args[0];
+            args.code.should.equal('USD');
+            args.ts.should.deep.equal([100, 200]);
+            done();
+          });
+        });
+      });
+
+      it('returns 400 when multiple timestamps are provided to /v3/fiatrates/ without code', function(done) {
+        const server = {
+          getFiatRates: sinon.stub().callsArgWith(1, null, {})
+        };
+        sandbox.stub(WalletService, 'initialize').callsArg(1);
+        sandbox.stub(WalletService, 'getInstance').returns(server);
+        start(ExpressApp, function() {
+          const requestOptions = {
+            url: `${testHost}:${testPort}${config.basePath}/v3/fiatrates/?ts=100,200`
+          };
+          request(requestOptions, function(err, res) {
+            should.not.exist(err);
+            res.statusCode.should.equal(400);
+            should.not.exist(server.getFiatRates.getCalls()[0]);
+            done();
+          });
+        });
+      });
+
       describe('Balance', function() {
         it('should handle cache argument', function(done) {
           const server = {
