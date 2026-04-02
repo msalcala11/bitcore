@@ -2575,6 +2575,8 @@ export class API extends EventEmitter {
       skip?: number;
       /** Limit the number of transactions */
       limit?: number;
+      /** Return oldest transactions first. In this mode, skip behaves like an oldest-first cursor. */
+      reverse?: boolean;
       /** ERC20 token contract address */
       tokenAddress?: string;
       /** MULTISIG ETH Contract Address */
@@ -2594,6 +2596,7 @@ export class API extends EventEmitter {
       if (opts) {
         if (opts.skip) args.push('skip=' + opts.skip);
         if (opts.limit) args.push('limit=' + opts.limit);
+        if (opts.reverse) args.push('reverse=1');
         if (opts.tokenAddress) args.push('tokenAddress=' + opts.tokenAddress);
         if (opts.multisigContractAddress)
           args.push('multisigContractAddress=' + opts.multisigContractAddress);

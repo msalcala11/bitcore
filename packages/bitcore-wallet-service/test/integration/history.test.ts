@@ -85,6 +85,56 @@ describe('History', function() {
       });
     });
 
+    it('should page from oldest first with reverse and keep skip stable if new txs arrive', async function() {
+      const _cache = Defaults.CONFIRMATIONS_TO_START_CACHING;
+      (Defaults.CONFIRMATIONS_TO_START_CACHING as any) = 1;
+
+      try {
+        const baseTxs = helpers.createTxsV8(5, BCHEIGHT);
+        helpers.stubHistory(null, null, baseTxs);
+
+        const firstPage = await new Promise<any[]>((resolve, reject) => {
+          server.getTxHistory({ limit: 2, reverse: true }, function(err, txs) {
+            if (err) return reject(err);
+            resolve(txs);
+          });
+        });
+
+        firstPage.map(tx => tx.id).should.deep.equal(['id4', 'id3']);
+
+        const txTemplate = baseTxs[0];
+        const updatedTxs = [
+          {
+            ...txTemplate,
+            id: 'newid0',
+            txid: 'newtxid0',
+            height: -1,
+            blockTime: '2018-09-21T18:08:33.000Z'
+          },
+          {
+            ...txTemplate,
+            id: 'newid1',
+            txid: 'newtxid1',
+            height: -1,
+            blockTime: '2018-09-21T18:08:32.000Z'
+          },
+          ...baseTxs
+        ];
+        helpers.stubHistory(null, null, updatedTxs);
+
+        const secondPage = await new Promise<any[]>((resolve, reject) => {
+          server.getTxHistory({ skip: 2, limit: 2, reverse: true }, function(err, txs) {
+            if (err) return reject(err);
+            resolve(txs);
+          });
+        });
+
+        secondPage.map(tx => tx.id).should.deep.equal(['id2', 'id1']);
+      } finally {
+        (Defaults.CONFIRMATIONS_TO_START_CACHING as any) = _cache;
+      }
+    });
+
     it('should filter out DUST amount', function(done) {
       const txs= helpers.createTxsV8(50, BCHEIGHT);
       txs[5].satoshis=100;
@@ -1139,4 +1189,3 @@ describe('History', function() {
     });
   });
 });
-
