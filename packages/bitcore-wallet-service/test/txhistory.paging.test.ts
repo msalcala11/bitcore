@@ -149,4 +149,18 @@ describe('TxHistory Paging', function() {
     secondPage.useStream.should.equal(true);
     secondPage.items.map(tx => tx.id).should.deep.equal(['id1', 'id0']);
   });
+
+  it('should trim streamed txs that were promoted into cache before newest-first paging', async function() {
+    const cacheNewest = [makeTx(3)];
+    const bcNewest = [makeTx(0), makeTx(1), makeTx(2), makeTx(3)];
+    const { service, bc, wallet } = buildService(cacheNewest, () => bcNewest);
+
+    const firstPage = await callGetTxHistoryV8(service, bc, wallet, {}, 0, 2);
+    firstPage.useStream.should.equal(false);
+    firstPage.items.map(tx => tx.id).should.deep.equal(['id0', 'id1']);
+
+    const secondPage = await callGetTxHistoryV8(service, bc, wallet, {}, 2, 2);
+    secondPage.useStream.should.equal(true);
+    secondPage.items.map(tx => tx.id).should.deep.equal(['id2', 'id3']);
+  });
 });
