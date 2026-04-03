@@ -4482,6 +4482,13 @@ export class WalletService implements IWalletService {
         next => {
           if (streamData) {
             lastTxs = streamData;
+            if (cacheStatus.tipTxId) {
+              // Stream data can outlive cache promotion, so trim any entries that
+              // are now part of the durable cache before paging.
+              lastTxs = _.takeWhile(lastTxs, (tx: any) => {
+                return tx.txid != cacheStatus.tipTxId;
+              });
+            }
             return next();
           }
 

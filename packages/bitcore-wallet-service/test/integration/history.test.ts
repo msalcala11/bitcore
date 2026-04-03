@@ -135,6 +135,57 @@ describe('History', function() {
       }
     });
 
+    it('should trim reused stream data against the current cache tip in reverse mode', async function() {
+      const _cache = Defaults.CONFIRMATIONS_TO_START_CACHING;
+      (Defaults.CONFIRMATIONS_TO_START_CACHING as any) = 1;
+
+      try {
+        const baseTxs = helpers.createTxsV8(4, BCHEIGHT);
+        helpers.stubHistory(null, null, baseTxs);
+
+        await new Promise<void>((resolve, reject) => {
+          server.storage.storeTxHistoryCacheV8(
+            wallet.id,
+            null,
+            [
+              {
+                id: baseTxs[3].id,
+                txid: baseTxs[3].txid,
+                blockheight: baseTxs[3].height
+              }
+            ],
+            0,
+            err => {
+              if (err) return reject(err);
+              resolve();
+            }
+          );
+        });
+
+        const firstPage = await new Promise<{ txs: any[]; useStream: boolean }>((resolve, reject) => {
+          server.getTxHistory({ limit: 2, reverse: true }, function(err, txs, _fromCache, useStream) {
+            if (err) return reject(err);
+            resolve({ txs, useStream });
+          });
+        });
+
+        firstPage.useStream.should.equal(false);
+        firstPage.txs.map(tx => tx.id).should.deep.equal(['id3', 'id2']);
+
+        const secondPage = await new Promise<{ txs: any[]; useStream: boolean }>((resolve, reject) => {
+          server.getTxHistory({ skip: 2, limit: 2, reverse: true }, function(err, txs, _fromCache, useStream) {
+            if (err) return reject(err);
+            resolve({ txs, useStream });
+          });
+        });
+
+        secondPage.useStream.should.equal(true);
+        secondPage.txs.map(tx => tx.id).should.deep.equal(['id1', 'id0']);
+      } finally {
+        (Defaults.CONFIRMATIONS_TO_START_CACHING as any) = _cache;
+      }
+    });
+
     it('should filter out DUST amount', function(done) {
       const txs= helpers.createTxsV8(50, BCHEIGHT);
       txs[5].satoshis=100;
