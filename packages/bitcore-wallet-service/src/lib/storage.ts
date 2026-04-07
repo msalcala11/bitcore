@@ -952,6 +952,17 @@ export class Storage {
   }
 
   getTxHistoryCacheStatusV8(walletId, cb) {
+    const formatStatus = result => {
+      return {
+        updatedOn: result.updatedOn,
+        updatedHeight: result.updatedHeight,
+        tipIndex: result.tipIndex,
+        tipTxId: result.tipTxId,
+        tipHeight: result.tipHeight,
+        tipTxIdsAtHeight: result.tipTxIdsAtHeight
+      };
+    };
+
     this.db.collection(collections.CACHE).findOne(
       {
         walletId,
@@ -966,14 +977,48 @@ export class Storage {
             tipIndex: null
           });
 
-        return cb(null, {
-          updatedOn: result.updatedOn,
-          updatedHeight: result.updatedHeight,
-          tipIndex: result.tipIndex,
-          tipTxId: result.tipTxId,
-          tipHeight: result.tipHeight,
-          tipTxIdsAtHeight: result.tipTxIdsAtHeight
-        });
+        if (!_.isNumber(result.tipHeight) || Array.isArray(result.tipTxIdsAtHeight)) {
+          return cb(null, formatStatus(result));
+        }
+
+        this.db
+          .collection(collections.CACHE)
+          .find({
+            walletId,
+            type: 'historyCacheV8',
+            'tx.blockheight': result.tipHeight
+          })
+          .sort({
+            key: -1
+          })
+          .toArray((cacheErr, txRows) => {
+            if (cacheErr) return cb(cacheErr);
+
+            const tipTxIdsAtHeight = _.chain(txRows)
+              .map('tx.txid')
+              .compact()
+              .uniq()
+              .value();
+
+            result.tipTxIdsAtHeight = tipTxIdsAtHeight.length ? tipTxIdsAtHeight : [result.tipTxId];
+
+            this.db.collection(collections.CACHE).updateOne(
+              {
+                walletId,
+                type: 'historyCacheStatusV8',
+                key: null
+              },
+              {
+                $set: {
+                  tipTxIdsAtHeight: result.tipTxIdsAtHeight
+                }
+              },
+              err2 => {
+                if (err2) return cb(err2);
+                return cb(null, formatStatus(result));
+              }
+            );
+          });
       }
     );
   }
