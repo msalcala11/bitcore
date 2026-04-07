@@ -4444,6 +4444,40 @@ export class WalletService implements IWalletService {
       walletCacheKey = `${wallet.id}-${opts.multisigContractAddress}`;
     }
 
+    const trimAgainstCacheBoundary = (txs: any[]) => {
+      if (!txs?.length) return [];
+
+      const tipHeight = cacheStatus?.tipHeight;
+      const tipTxIdsAtHeight = Array.isArray(cacheStatus?.tipTxIdsAtHeight) && cacheStatus.tipTxIdsAtHeight.length
+        ? new Set(cacheStatus.tipTxIdsAtHeight)
+        : null;
+
+      if (!_.isNumber(tipHeight) || !tipTxIdsAtHeight) {
+        if (!cacheStatus?.tipTxId) return txs;
+        return _.takeWhile(txs, (tx: any) => {
+          return tx.txid != cacheStatus.tipTxId;
+        });
+      }
+
+      return txs.filter((tx: any) => {
+        const blockheight = tx.blockheight;
+
+        if (!_.isNumber(blockheight) || blockheight <= 0) {
+          return true;
+        }
+
+        if (blockheight > tipHeight) {
+          return true;
+        }
+
+        if (blockheight < tipHeight) {
+          return false;
+        }
+
+        return !tipTxIdsAtHeight.has(tx.txid);
+      });
+    };
+
     async.series(
       [
         next => {
@@ -4486,14 +4520,9 @@ export class WalletService implements IWalletService {
         },
         next => {
           if (streamData) {
-            lastTxs = streamData;
-            if (cacheStatus.tipTxId) {
-              // Stream data can outlive cache promotion, so trim any entries that
-              // are now part of the durable cache before paging.
-              lastTxs = _.takeWhile(lastTxs, (tx: any) => {
-                return tx.txid != cacheStatus.tipTxId;
-              });
-            }
+            // Stream data can outlive cache promotion, so trim any entries that
+            // are now part of the durable cache before paging.
+            lastTxs = trimAgainstCacheBoundary(streamData);
             return next();
           }
 
@@ -4506,21 +4535,15 @@ export class WalletService implements IWalletService {
             this._normalizeTxHistory(walletCacheKey, txs, dustThreshold, bcHeight, (err, inTxs: any[]) => {
               if (err) return cb(err);
 
-              if (cacheStatus.tipTxId) {
-                // first item is the most recent tx.
-                // removes already cache txs
-                lastTxs = _.takeWhile(inTxs, tx => {
-                  // cacheTxs are very confirmed, so can't be reorged
-                  return tx.txid != cacheStatus.tipTxId;
-                });
+              lastTxs = trimAgainstCacheBoundary(inTxs);
 
+              if (_.isNumber(cacheStatus.tipIndex)) {
                 // only store stream IF cache is been used.
                 //
                 logger.info(`Storing stream cache for ${walletCacheKey}: ${lastTxs.length} txs`);
                 return this.storage.storeTxHistoryStreamV8(walletCacheKey, streamKey, lastTxs, next);
               }
 
-              lastTxs = inTxs;
               return next();
             });
           });

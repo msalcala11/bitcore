@@ -63,6 +63,16 @@ describe('History', function() {
       await helpers.stubCheckData(blockchainExplorer, server, wallet.coin == 'bch');
     });
 
+    const makeHistoryTx = (suffix: string, height: number) => {
+      const template = helpers.createTxsV8(1, BCHEIGHT)[0];
+      return {
+        ...template,
+        id: `id${suffix}`,
+        txid: `txid${suffix}`,
+        height
+      };
+    };
+
     it('should get tx history from insight, 20 items', function(done) {
       helpers.stubHistory(50, BCHEIGHT);
       server.getTxHistory({ limit: 20 }, function(err, txs, fromCache) {
@@ -232,6 +242,100 @@ describe('History', function() {
 
         secondPage.useStream.should.equal(true);
         secondPage.txs.map(tx => tx.id).should.deep.equal(['id2', 'id3']);
+      } finally {
+        (Defaults.CONFIRMATIONS_TO_START_CACHING as any) = _cache;
+      }
+    });
+
+    it('should filter same-height frontier txs out of newest-first mixed pages', async function() {
+      const _cache = Defaults.CONFIRMATIONS_TO_START_CACHING;
+      (Defaults.CONFIRMATIONS_TO_START_CACHING as any) = 1;
+
+      try {
+        helpers.stubHistory(null, null, [
+          makeHistoryTx('new0', -1),
+          makeHistoryTx('c', BCHEIGHT),
+          makeHistoryTx('x', BCHEIGHT),
+          makeHistoryTx('a', BCHEIGHT),
+          makeHistoryTx('d', BCHEIGHT - 1),
+          makeHistoryTx('e', BCHEIGHT - 2)
+        ]);
+
+        await new Promise<void>((resolve, reject) => {
+          server.storage.storeTxHistoryCacheV8(
+            wallet.id,
+            null,
+            [
+              { id: 'ida', txid: 'txida', blockheight: BCHEIGHT },
+              { id: 'idc', txid: 'txidc', blockheight: BCHEIGHT },
+              { id: 'idd', txid: 'txidd', blockheight: BCHEIGHT - 1 },
+              { id: 'ide', txid: 'txide', blockheight: BCHEIGHT - 2 }
+            ],
+            0,
+            err => {
+              if (err) return reject(err);
+              resolve();
+            }
+          );
+        });
+
+        const page = await new Promise<any[]>((resolve, reject) => {
+          server.getTxHistory({ limit: 5 }, function(err, txs) {
+            if (err) return reject(err);
+            resolve(txs);
+          });
+        });
+
+        const txids = page.map(tx => tx.txid);
+        txids.should.deep.equal(['txidnew0', 'txidx', 'txida', 'txidc', 'txidd']);
+        new Set(txids).size.should.equal(txids.length);
+      } finally {
+        (Defaults.CONFIRMATIONS_TO_START_CACHING as any) = _cache;
+      }
+    });
+
+    it('should filter same-height frontier txs out of reverse mixed pages', async function() {
+      const _cache = Defaults.CONFIRMATIONS_TO_START_CACHING;
+      (Defaults.CONFIRMATIONS_TO_START_CACHING as any) = 1;
+
+      try {
+        helpers.stubHistory(null, null, [
+          makeHistoryTx('new0', -1),
+          makeHistoryTx('c', BCHEIGHT),
+          makeHistoryTx('x', BCHEIGHT),
+          makeHistoryTx('a', BCHEIGHT),
+          makeHistoryTx('d', BCHEIGHT - 1),
+          makeHistoryTx('e', BCHEIGHT - 2)
+        ]);
+
+        await new Promise<void>((resolve, reject) => {
+          server.storage.storeTxHistoryCacheV8(
+            wallet.id,
+            null,
+            [
+              { id: 'ida', txid: 'txida', blockheight: BCHEIGHT },
+              { id: 'idc', txid: 'txidc', blockheight: BCHEIGHT },
+              { id: 'idd', txid: 'txidd', blockheight: BCHEIGHT - 1 },
+              { id: 'ide', txid: 'txide', blockheight: BCHEIGHT - 2 }
+            ],
+            0,
+            err => {
+              if (err) return reject(err);
+              resolve();
+            }
+          );
+        });
+
+        const page = await new Promise<any[]>((resolve, reject) => {
+          server.getTxHistory({ skip: 2, limit: 4, reverse: true }, function(err, txs) {
+            if (err) return reject(err);
+            resolve(txs);
+          });
+        });
+
+        const txids = page.map(tx => tx.txid);
+        txids.should.deep.equal(['txidc', 'txida', 'txidx', 'txidnew0']);
+        new Set(txids).size.should.equal(txids.length);
       } finally {
         (Defaults.CONFIRMATIONS_TO_START_CACHING as any) = _cache;
       }

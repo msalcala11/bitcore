@@ -971,7 +971,8 @@ export class Storage {
           updatedHeight: result.updatedHeight,
           tipIndex: result.tipIndex,
           tipTxId: result.tipTxId,
-          tipHeight: result.tipHeight
+          tipHeight: result.tipHeight,
+          tipTxIdsAtHeight: result.tipTxIdsAtHeight
         });
       }
     );
@@ -1194,6 +1195,12 @@ export class Storage {
           return cb(e);
         }
 
+        const tipTxIdsAtHeight = _.chain(items)
+          .filter(item => item.blockheight === last.blockheight)
+          .map('txid')
+          .uniq()
+          .value();
+
         logger.debug(`Cache Last Item: ${last.txid} blockh: ${last.blockheight} updatedh: ${updateHeight}`);
         this.db.collection(collections.CACHE).replaceOne(
           {
@@ -1209,7 +1216,8 @@ export class Storage {
             updatedHeight: updateHeight,
             tipIndex: pos,
             tipTxId: last.txid,
-            tipHeight: last.blockheight
+            tipHeight: last.blockheight,
+            tipTxIdsAtHeight
           },
           {
             w: 1,

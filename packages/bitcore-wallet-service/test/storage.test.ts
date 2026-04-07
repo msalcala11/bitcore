@@ -251,6 +251,7 @@ describe('Storage', function() {
           inCacheStatus.tipIndex.should.equal(81);
           inCacheStatus.tipTxId.should.equal('1234');
           inCacheStatus.tipHeight.should.equal(800);
+          inCacheStatus.tipTxIdsAtHeight.should.deep.equal(['1234']);
           inCacheStatus.updatedHeight.should.equal(1000);
           done();
         });
@@ -275,7 +276,32 @@ describe('Storage', function() {
           inCacheStatus.tipIndex.should.equal(85);
           inCacheStatus.tipTxId.should.equal('1234');
           inCacheStatus.tipHeight.should.equal(803);
+          inCacheStatus.tipTxIdsAtHeight.should.deep.equal(['1234']);
           inCacheStatus.updatedHeight.should.equal(1000);
+          done();
+        });
+      });
+    });
+
+    it('should round-trip tipTxIdsAtHeight from the frontier height only', (done) => {
+      const tipIndex = 80;
+      const items = [
+        { txid: '1234', blockheight: 803 },
+        { txid: '1235', blockheight: 803 },
+        { txid: '1236', blockheight: 802 },
+        { txid: '1237', blockheight: 801 },
+        { txid: '1238', blockheight: 801 },
+      ];
+      const updateHeight = 1000;
+
+      storage.storeTxHistoryCacheV8('xx', tipIndex, items, updateHeight, (err) => {
+        should.not.exist(err);
+        storage.getTxHistoryCacheStatusV8('xx', (err, inCacheStatus) => {
+          should.not.exist(err);
+          inCacheStatus.tipIndex.should.equal(85);
+          inCacheStatus.tipTxId.should.equal('1234');
+          inCacheStatus.tipHeight.should.equal(803);
+          inCacheStatus.tipTxIdsAtHeight.should.have.members(['1234', '1235']);
           done();
         });
       });
@@ -317,6 +343,7 @@ describe('Storage', function() {
           inCacheStatus.tipIndex.should.equal(80 + 100);
           inCacheStatus.tipTxId.should.equal('txid1');
           inCacheStatus.tipHeight.should.equal(1000);
+          inCacheStatus.tipTxIdsAtHeight.should.deep.equal(['txid1']);
           inCacheStatus.updatedHeight.should.equal(updateHeight);
           done();
         });

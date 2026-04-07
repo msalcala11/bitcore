@@ -13,13 +13,18 @@ type TxItem = {
   blockheight: number;
 };
 
-function makeTx(id: number): TxItem {
+function makeTxAt(id: string | number, blockheight: number): TxItem {
+  const suffix = String(id);
   return {
-    id: `id${id}`,
-    txid: `txid${id}`,
-    confirmations: 100 - id,
-    blockheight: 1000 - id
+    id: `id${suffix}`,
+    txid: `txid${suffix}`,
+    confirmations: blockheight > 0 ? 1001 - blockheight : 0,
+    blockheight
   };
+}
+
+function makeTx(id: number): TxItem {
+  return makeTxAt(id, 1000 - id);
 }
 
 function callGetTxHistoryV8(service: WalletService, bc, wallet, opts, skip: number, limit: number) {
@@ -32,7 +37,13 @@ function callGetTxHistoryV8(service: WalletService, bc, wallet, opts, skip: numb
 }
 
 describe('TxHistory Paging', function() {
-  function buildService(initialCacheNewest: TxItem[], getBcNewest: () => TxItem[]) {
+  function buildService(
+    initialCacheNewest: TxItem[],
+    getBcNewest: () => TxItem[],
+    opts?: {
+      omitTipTxIdsAtHeight?: boolean;
+    }
+  ) {
     let cacheNewest = initialCacheNewest.slice();
     let streamKey: string | null = null;
     let streamItems: TxItem[] | null = null;
@@ -50,13 +61,18 @@ describe('TxHistory Paging', function() {
     service._getBlockchainHeight = (_chain, _network, cb) => cb(null, 1000, 'test-hash');
     service._normalizeTxHistory = (_walletCacheKey, _txs, _dustThreshold, _bcHeight, cb) => cb(null, getBcNewest());
     service.storage = {
-      getTxHistoryCacheStatusV8: (_walletCacheKey, cb) =>
+      getTxHistoryCacheStatusV8: (_walletCacheKey, cb) => {
+        const tipHeight = cacheNewest.length ? cacheNewest[0].blockheight : null;
         cb(null, {
           updatedHeight: 0,
           tipIndex: cacheNewest.length ? cacheNewest.length - 1 : null,
           tipTxId: cacheNewest.length ? cacheNewest[0].txid : null,
-          tipHeight: cacheNewest.length ? cacheNewest[0].blockheight : null
-        }),
+          tipHeight,
+          tipTxIdsAtHeight: opts?.omitTipTxIdsAtHeight
+            ? undefined
+            : cacheNewest.filter(tx => tx.blockheight === tipHeight).map(tx => tx.txid)
+        });
+      },
       getTxHistoryStreamV8: (_walletCacheKey, cb) =>
         cb(null, streamKey && streamItems ? { streamKey, items: streamItems.slice() } : null),
       clearTxHistoryStreamV8: (_walletCacheKey, cb) => {
@@ -162,5 +178,60 @@ describe('TxHistory Paging', function() {
     const secondPage = await callGetTxHistoryV8(service, bc, wallet, {}, 2, 2);
     secondPage.useStream.should.equal(true);
     secondPage.items.map(tx => tx.id).should.deep.equal(['id2', 'id3']);
+  });
+
+  it('should filter same-height frontier txs out of newest-first mixed pages', async function() {
+    const cacheNewest = [makeTxAt('a', 100), makeTxAt('c', 100), makeTxAt('d', 99), makeTxAt('e', 98)];
+    const bcNewest = [
+      makeTxAt('new0', -1),
+      makeTxAt('c', 100),
+      makeTxAt('x', 100),
+      makeTxAt('a', 100),
+      makeTxAt('d', 99),
+      makeTxAt('e', 98)
+    ];
+    const { service, bc, wallet } = buildService(cacheNewest, () => bcNewest);
+
+    const result = await callGetTxHistoryV8(service, bc, wallet, {}, 0, 5);
+    const txids = result.items.map(tx => tx.txid);
+
+    txids.should.deep.equal(['txidnew0', 'txidx', 'txida', 'txidc', 'txidd']);
+    new Set(txids).size.should.equal(txids.length);
+  });
+
+  it('should filter same-height frontier txs out of reverse mixed pages', async function() {
+    const cacheNewest = [makeTxAt('a', 100), makeTxAt('c', 100), makeTxAt('d', 99), makeTxAt('e', 98)];
+    const bcNewest = [
+      makeTxAt('new0', -1),
+      makeTxAt('c', 100),
+      makeTxAt('x', 100),
+      makeTxAt('a', 100),
+      makeTxAt('d', 99),
+      makeTxAt('e', 98)
+    ];
+    const { service, bc, wallet } = buildService(cacheNewest, () => bcNewest);
+
+    const result = await callGetTxHistoryV8(service, bc, wallet, { reverse: true }, 2, 4);
+    const txids = result.items.map(tx => tx.txid);
+
+    txids.should.deep.equal(['txidc', 'txida', 'txidx', 'txidnew0']);
+    new Set(txids).size.should.equal(txids.length);
+  });
+
+  it('should fall back to tipTxId trimming for legacy cache rows', async function() {
+    const cacheNewest = [makeTxAt('a', 100), makeTxAt('c', 100), makeTxAt('d', 99), makeTxAt('e', 98)];
+    const bcNewest = [
+      makeTxAt('new0', -1),
+      makeTxAt('c', 100),
+      makeTxAt('x', 100),
+      makeTxAt('a', 100),
+      makeTxAt('d', 99),
+      makeTxAt('e', 98)
+    ];
+    const { service, bc, wallet } = buildService(cacheNewest, () => bcNewest, { omitTipTxIdsAtHeight: true });
+
+    const result = await callGetTxHistoryV8(service, bc, wallet, {}, 0, 5);
+
+    result.items.map(tx => tx.txid).should.deep.equal(['txidnew0', 'txidc', 'txidx', 'txida', 'txidc']);
   });
 });
