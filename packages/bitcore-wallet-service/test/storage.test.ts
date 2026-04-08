@@ -347,6 +347,48 @@ describe('Storage', function() {
       });
     });
 
+    it('should ignore same-height cache rows above tipIndex when backfilling legacy status rows', (done) => {
+      const historyRows = [
+        { walletId: 'xx', type: 'historyCacheV8', key: 84, tx: { txid: '9999', blockheight: 803 } },
+        { walletId: 'xx', type: 'historyCacheV8', key: 83, tx: { txid: '1234', blockheight: 803 } },
+        { walletId: 'xx', type: 'historyCacheV8', key: 82, tx: { txid: '1235', blockheight: 803 } },
+        { walletId: 'xx', type: 'historyCacheV8', key: 81, tx: { txid: '1236', blockheight: 802 } },
+      ];
+      const legacyStatus = {
+        walletId: 'xx',
+        type: 'historyCacheStatusV8',
+        key: null,
+        tipIndex: 83,
+        tipTxId: '1234',
+        tipHeight: 803,
+        updatedHeight: 1000
+      };
+
+      storage.db.collection('cache').insertMany([...historyRows, legacyStatus], err => {
+        should.not.exist(err);
+
+        storage.getTxHistoryCacheStatusV8('xx', (statusErr, inCacheStatus) => {
+          should.not.exist(statusErr);
+          inCacheStatus.tipTxIdsAtHeight.should.have.members(['1234', '1235']);
+          inCacheStatus.tipTxIdsAtHeight.should.not.include('9999');
+
+          storage.db.collection('cache').findOne(
+            {
+              walletId: 'xx',
+              type: 'historyCacheStatusV8',
+              key: null
+            },
+            (findErr, storedStatus) => {
+              should.not.exist(findErr);
+              storedStatus.tipTxIdsAtHeight.should.have.members(['1234', '1235']);
+              storedStatus.tipTxIdsAtHeight.should.not.include('9999');
+              done();
+            }
+          );
+        });
+      });
+    });
+
     it('should fall back to legacy status when frontier scan is empty', (done) => {
       const historyRows = [
         { walletId: 'xx', type: 'historyCacheV8', key: 81, tx: { txid: '1236', blockheight: 802 } },

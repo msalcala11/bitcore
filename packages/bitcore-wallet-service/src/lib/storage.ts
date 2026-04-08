@@ -971,6 +971,58 @@ export class Storage {
         ...extra
       });
     };
+    const scanFrontierTxIdsAtHeight = (result, next) => {
+      if (!_.isNumber(result.tipIndex) || result.tipIndex < 0 || !_.isNumber(result.tipHeight)) {
+        return next(null, []);
+      }
+
+      const tipTxIdsAtHeight: string[] = [];
+      const seenTxIds = new Set<string>();
+      const cursor = this.db
+        .collection(collections.CACHE)
+        .find({
+          walletId,
+          type: 'historyCacheV8',
+          key: {
+            $lte: result.tipIndex
+          }
+        })
+        .sort({
+          key: -1
+        });
+
+      const finish = (err, txids) => {
+        cursor.close(closeErr => {
+          return next(err || closeErr, txids);
+        });
+      };
+
+      const scanNext = () => {
+        cursor.next((cursorErr, txRow) => {
+          if (cursorErr) {
+            return finish(cursorErr, tipTxIdsAtHeight);
+          }
+          if (!txRow) {
+            return finish(null, tipTxIdsAtHeight);
+          }
+
+          const blockheight = _.get(txRow, 'tx.blockheight');
+          if (!_.isNumber(blockheight) || blockheight !== result.tipHeight) {
+            return finish(null, tipTxIdsAtHeight);
+          }
+
+          const txid = _.get(txRow, 'tx.txid');
+          if (txid && !seenTxIds.has(txid)) {
+            seenTxIds.add(txid);
+            tipTxIdsAtHeight.push(txid);
+          }
+
+          return scanNext();
+        });
+      };
+
+      return scanNext();
+    };
 
     this.db.collection(collections.CACHE).findOne(
       {
@@ -990,76 +1042,60 @@ export class Storage {
           return cb(null, formatStatus(result));
         }
 
-        this.db
-          .collection(collections.CACHE)
-          .find({
-            walletId,
-            type: 'historyCacheV8',
-            'tx.blockheight': result.tipHeight
-          })
-          .sort({
-            key: -1
-          })
-          .toArray((cacheErr, txRows) => {
-            if (cacheErr) {
-              logBackfillFallback('scan_error', result, { error: cacheErr.message });
-              return cb(null, formatStatus(result));
-            }
+        scanFrontierTxIdsAtHeight(result, (cacheErr, tipTxIdsAtHeight) => {
+          if (cacheErr) {
+            logBackfillFallback('scan_error', result, { error: cacheErr.message });
+            return cb(null, formatStatus(result));
+          }
 
-            const tipTxIdsAtHeight = _.chain(txRows)
-              .map('tx.txid')
-              .compact()
-              .uniq()
-              .value();
+          if (!tipTxIdsAtHeight.length) {
+            logBackfillFallback('empty_frontier_scan', result);
+            return cb(null, formatStatus(result));
+          }
 
-            if (!tipTxIdsAtHeight.length) {
-              logBackfillFallback('empty_frontier_scan', result);
-              return cb(null, formatStatus(result));
-            }
+          if (!tipTxIdsAtHeight.includes(result.tipTxId)) {
+            logBackfillFallback('missing_tip_txid', result, { tipTxIdsAtHeight });
+            return cb(null, formatStatus(result));
+          }
 
-            if (!tipTxIdsAtHeight.includes(result.tipTxId)) {
-              logBackfillFallback('missing_tip_txid', result, { tipTxIdsAtHeight });
-              return cb(null, formatStatus(result));
-            }
+          const enrichedResult = {
+            ...result,
+            tipTxIdsAtHeight
+          };
 
-            const enrichedResult = {
-              ...result,
-              tipTxIdsAtHeight
-            };
-
-            this.db.collection(collections.CACHE).updateOne(
-              {
-                walletId,
-                type: 'historyCacheStatusV8',
-                key: null,
-                tipHeight: result.tipHeight,
-                tipTxId: result.tipTxId,
-                tipTxIdsAtHeight: { $exists: false }
-              },
-              {
-                $set: {
-                  tipTxIdsAtHeight
-                }
-              },
-              (err2, updateResult) => {
-                if (err2) {
-                  logBackfillFallback('write_error', result, { error: err2.message });
-                  return cb(null, formatStatus(enrichedResult));
-                }
-
-                const matchedCount = _.get(updateResult, 'matchedCount', _.get(updateResult, 'result.n', 0));
-                if (matchedCount === 0) {
-                  logger.debug('Skipped txhistory cache frontier backfill %o', {
-                    walletId,
-                    tipHeight: result.tipHeight,
-                    tipTxId: result.tipTxId
-                  });
-                }
-
+          this.db.collection(collections.CACHE).updateOne(
+            {
+              walletId,
+              type: 'historyCacheStatusV8',
+              key: null,
+              tipHeight: result.tipHeight,
+              tipTxId: result.tipTxId,
+              tipTxIdsAtHeight: { $exists: false }
+            },
+            {
+              $set: {
+                tipTxIdsAtHeight
+              }
+            },
+            (err2, updateResult) => {
+              if (err2) {
+                logBackfillFallback('write_error', result, { error: err2.message });
                 return cb(null, formatStatus(enrichedResult));
               }
-            );
-          });
+
+              const matchedCount = _.get(updateResult, 'matchedCount', _.get(updateResult, 'result.n', 0));
+              if (matchedCount === 0) {
+                logger.debug('Skipped txhistory cache frontier backfill %o', {
+                  walletId,
+                  tipHeight: result.tipHeight,
+                  tipTxId: result.tipTxId
+                });
+              }
+
+              return cb(null, formatStatus(enrichedResult));
+            }
+          );
+        });
       }
     );
   }
