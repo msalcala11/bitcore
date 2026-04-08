@@ -3,6 +3,7 @@
 import * as chai from 'chai';
 import 'chai/register-should';
 import mongodb from 'mongodb';
+import sinon from 'sinon';
 import util from 'util';
 import { Storage } from '../src/lib/storage';
 import * as Model from '../src/lib/model';
@@ -339,6 +340,129 @@ describe('Storage', function() {
             (findErr, storedStatus) => {
               should.not.exist(findErr);
               storedStatus.tipTxIdsAtHeight.should.have.members(['1234', '1235']);
+              done();
+            }
+          );
+        });
+      });
+    });
+
+    it('should fall back to legacy status when frontier scan is empty', (done) => {
+      const historyRows = [
+        { walletId: 'xx', type: 'historyCacheV8', key: 81, tx: { txid: '1236', blockheight: 802 } },
+      ];
+      const legacyStatus = {
+        walletId: 'xx',
+        type: 'historyCacheStatusV8',
+        key: null,
+        tipIndex: 83,
+        tipTxId: '1234',
+        tipHeight: 803,
+        updatedHeight: 1000
+      };
+
+      storage.db.collection('cache').insertMany([...historyRows, legacyStatus], err => {
+        should.not.exist(err);
+
+        storage.getTxHistoryCacheStatusV8('xx', (statusErr, inCacheStatus) => {
+          should.not.exist(statusErr);
+          should.not.exist(inCacheStatus.tipTxIdsAtHeight);
+
+          storage.db.collection('cache').findOne(
+            {
+              walletId: 'xx',
+              type: 'historyCacheStatusV8',
+              key: null
+            },
+            (findErr, storedStatus) => {
+              should.not.exist(findErr);
+              should.not.exist(storedStatus.tipTxIdsAtHeight);
+              done();
+            }
+          );
+        });
+      });
+    });
+
+    it('should fall back to legacy status when frontier scan misses tipTxId', (done) => {
+      const historyRows = [
+        { walletId: 'xx', type: 'historyCacheV8', key: 83, tx: { txid: '1235', blockheight: 803 } },
+        { walletId: 'xx', type: 'historyCacheV8', key: 82, tx: { txid: '1236', blockheight: 803 } },
+        { walletId: 'xx', type: 'historyCacheV8', key: 81, tx: { txid: '1237', blockheight: 802 } },
+      ];
+      const legacyStatus = {
+        walletId: 'xx',
+        type: 'historyCacheStatusV8',
+        key: null,
+        tipIndex: 83,
+        tipTxId: '1234',
+        tipHeight: 803,
+        updatedHeight: 1000
+      };
+
+      storage.db.collection('cache').insertMany([...historyRows, legacyStatus], err => {
+        should.not.exist(err);
+
+        storage.getTxHistoryCacheStatusV8('xx', (statusErr, inCacheStatus) => {
+          should.not.exist(statusErr);
+          should.not.exist(inCacheStatus.tipTxIdsAtHeight);
+
+          storage.db.collection('cache').findOne(
+            {
+              walletId: 'xx',
+              type: 'historyCacheStatusV8',
+              key: null
+            },
+            (findErr, storedStatus) => {
+              should.not.exist(findErr);
+              should.not.exist(storedStatus.tipTxIdsAtHeight);
+              done();
+            }
+          );
+        });
+      });
+    });
+
+    it('should return computed frontier txids if backfill persistence fails', (done) => {
+      const historyRows = [
+        { walletId: 'xx', type: 'historyCacheV8', key: 83, tx: { txid: '1234', blockheight: 803 } },
+        { walletId: 'xx', type: 'historyCacheV8', key: 82, tx: { txid: '1235', blockheight: 803 } },
+        { walletId: 'xx', type: 'historyCacheV8', key: 81, tx: { txid: '1236', blockheight: 802 } },
+      ];
+      const legacyStatus = {
+        walletId: 'xx',
+        type: 'historyCacheStatusV8',
+        key: null,
+        tipIndex: 83,
+        tipTxId: '1234',
+        tipHeight: 803,
+        updatedHeight: 1000
+      };
+
+      storage.db.collection('cache').insertMany([...historyRows, legacyStatus], err => {
+        should.not.exist(err);
+
+        const cacheCollection = storage.db.collection('cache');
+        const collectionStub = sinon.stub(storage.db, 'collection').callsFake(() => {
+          const wrappedCollection = Object.create(cacheCollection);
+          wrappedCollection.updateOne = (_filter, _update, cb) => cb(new Error('boom'));
+          return wrappedCollection;
+        });
+
+        storage.getTxHistoryCacheStatusV8('xx', (statusErr, inCacheStatus) => {
+          should.not.exist(statusErr);
+          inCacheStatus.tipTxIdsAtHeight.should.have.members(['1234', '1235']);
+          collectionStub.restore();
+
+          storage.db.collection('cache').findOne(
+            {
+              walletId: 'xx',
+              type: 'historyCacheStatusV8',
+              key: null
+            },
+            (findErr, storedStatus) => {
+              should.not.exist(findErr);
+              should.not.exist(storedStatus.tipTxIdsAtHeight);
               done();
             }
           );

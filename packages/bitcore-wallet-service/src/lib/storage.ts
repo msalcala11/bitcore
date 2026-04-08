@@ -962,6 +962,15 @@ export class Storage {
         tipTxIdsAtHeight: result.tipTxIdsAtHeight
       };
     };
+    const logBackfillFallback = (reason, result, extra = {}) => {
+      logger.warn('Could not backfill txhistory cache frontier txids %o', {
+        walletId,
+        reason,
+        tipHeight: result?.tipHeight,
+        tipTxId: result?.tipTxId,
+        ...extra
+      });
+    };
 
     this.db.collection(collections.CACHE).findOne(
       {
@@ -992,7 +1001,10 @@ export class Storage {
             key: -1
           })
           .toArray((cacheErr, txRows) => {
-            if (cacheErr) return cb(cacheErr);
+            if (cacheErr) {
+              logBackfillFallback('scan_error', result, { error: cacheErr.message });
+              return cb(null, formatStatus(result));
+            }
 
             const tipTxIdsAtHeight = _.chain(txRows)
               .map('tx.txid')
@@ -1000,22 +1012,51 @@ export class Storage {
               .uniq()
               .value();
 
-            result.tipTxIdsAtHeight = tipTxIdsAtHeight.length ? tipTxIdsAtHeight : [result.tipTxId];
+            if (!tipTxIdsAtHeight.length) {
+              logBackfillFallback('empty_frontier_scan', result);
+              return cb(null, formatStatus(result));
+            }
+
+            if (!tipTxIdsAtHeight.includes(result.tipTxId)) {
+              logBackfillFallback('missing_tip_txid', result, { tipTxIdsAtHeight });
+              return cb(null, formatStatus(result));
+            }
+
+            const enrichedResult = {
+              ...result,
+              tipTxIdsAtHeight
+            };
 
             this.db.collection(collections.CACHE).updateOne(
               {
                 walletId,
                 type: 'historyCacheStatusV8',
-                key: null
+                key: null,
+                tipHeight: result.tipHeight,
+                tipTxId: result.tipTxId,
+                tipTxIdsAtHeight: { $exists: false }
               },
               {
                 $set: {
-                  tipTxIdsAtHeight: result.tipTxIdsAtHeight
+                  tipTxIdsAtHeight
                 }
               },
-              err2 => {
-                if (err2) return cb(err2);
-                return cb(null, formatStatus(result));
+              (err2, updateResult) => {
+                if (err2) {
+                  logBackfillFallback('write_error', result, { error: err2.message });
+                  return cb(null, formatStatus(enrichedResult));
+                }
+
+                const matchedCount = _.get(updateResult, 'matchedCount', _.get(updateResult, 'result.n', 0));
+                if (matchedCount === 0) {
+                  logger.debug('Skipped txhistory cache frontier backfill %o', {
+                    walletId,
+                    tipHeight: result.tipHeight,
+                    tipTxId: result.tipTxId
+                  });
+                }
+
+                return cb(null, formatStatus(enrichedResult));
               }
             );
           });
