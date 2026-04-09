@@ -489,7 +489,7 @@ describe('CoinGecko integration', function() {
       getSpy.callCount.should.equal(0);
     });
 
-    it('should reject tokenAddress when returned token symbol does not match coin', async () => {
+    it('should ignore coin when tokenAddress is provided for market stats', async () => {
       forceGlobalCacheMisses();
       const tokenAddress = '0xaf88d065e77c8cc2239327c5edb3a432268e5831';
 
@@ -497,16 +497,28 @@ describe('CoinGecko integration', function() {
         onCoinContract: () => ({
           id: 'arbitrum-bridged-usdc-arbitrum',
           symbol: 'usdc.e'
-        })
+        }),
+        onMarkets: ids =>
+          ids.map(id => ({
+            id,
+            symbol: 'usdc.e',
+            name: 'Arbitrum Bridged USDC (Arbitrum)',
+            image: `${id}.png`,
+            current_price: 1,
+            total_volume: 1,
+            circulating_supply: 1,
+            market_cap: 1,
+            last_updated: '2020-01-01T00:00:00.000Z'
+          })),
+        onMarketChart: _id => ({ prices: [[0, 1], [1, 1]] }),
+        onCoinInfo: _id => ({ description: { en: 'About token' }, asset_platform_id: 'arbitrum-one' })
       });
       cg().request = fakeRequest;
 
-      try {
-        await getMarketStats({ coin: 'WBTC', chain: 'arb', tokenAddress });
-        should.fail('should have thrown');
-      } catch (err) {
-        err.message.should.equal('tokenAddress does not match coin');
-      }
+      const data = await getMarketStats({ coin: 'WBTC', chain: 'arb', tokenAddress });
+      should.exist(data);
+      data.should.have.length(1);
+      data[0].name.should.equal('Arbitrum Bridged USDC (Arbitrum)');
     });
 
 
@@ -775,7 +787,7 @@ describe('CoinGecko integration', function() {
       }
     });
 
-    it('should reject fiat rates tokenAddress when returned token symbol does not match coin', async () => {
+    it('should ignore coin when tokenAddress is provided for fiat rates', async () => {
       forceGlobalCacheMisses();
       const tokenAddress = '0xaf88d065e77c8cc2239327c5edb3a432268e5831';
 
@@ -783,16 +795,20 @@ describe('CoinGecko integration', function() {
         onCoinContract: () => ({
           id: 'arbitrum-bridged-usdc-arbitrum',
           symbol: 'usdc.e'
-        })
+        }),
+        onMarketChart: id =>
+          id === 'arbitrum-bridged-usdc-arbitrum'
+            ? { prices: [[1, 77], [2, 78]] }
+            : { prices: [[1, 1], [2, 1]] }
       });
       cg().request = fakeRequest;
 
-      try {
-        await getFiatRates({ coin: 'WBTC', chain: 'arb', tokenAddress });
-        should.fail('should have thrown');
-      } catch (err) {
-        err.message.should.equal('tokenAddress does not match coin');
-      }
+      const data = await getFiatRates({ coin: 'WBTC', chain: 'arb', tokenAddress });
+      should.exist(data);
+      data.should.deep.equal([
+        { ts: 1, rate: 77 },
+        { ts: 2, rate: 78 }
+      ]);
     });
 
     it('should accept array query params for days', async () => {

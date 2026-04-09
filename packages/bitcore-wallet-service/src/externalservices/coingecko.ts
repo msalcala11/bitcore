@@ -125,10 +125,11 @@ function validateQueryParam(query: Record<string, unknown> | undefined, key: str
 function parseCoinChainTokenAddress(
   query: Record<string, unknown> | undefined
 ): { coin?: string; chain?: string; tokenAddress?: string } {
+  const tokenAddress = validateQueryParam(query, 'tokenAddress');
   return {
-    coin: validateQueryParam(query, 'coin'),
+    coin: tokenAddress ? undefined : validateQueryParam(query, 'coin'),
     chain: validateQueryParam(query, 'chain'),
-    tokenAddress: validateQueryParam(query, 'tokenAddress')
+    tokenAddress
   };
 }
 
