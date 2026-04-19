@@ -36,6 +36,11 @@ import type { SolRpc } from '@bitpay-labs/crypto-rpc/lib/sol/SolRpc';
 
 export interface GetSolWeb3Response { rpc: SolRpc; connection: any; umi: any; dataType: string; lastPingTime?: number };
 
+function isMissingAtaError(err: any) {
+  const message = err?.message?.toLowerCase?.() || '';
+  return message.includes('ata not initialized') || message.includes('missing ata');
+}
+
 export class BaseSVMStateProvider extends InternalStateProvider implements IChainStateService {
   static rpcs: { [chainNetwork: string]: { historical: GetSolWeb3Response[]; realtime: GetSolWeb3Response[] } } = {};
   static rpcIndicies: { [chainNetwork: string]: { historical: number; realtime: number } } = {};
@@ -289,6 +294,11 @@ export class BaseSVMStateProvider extends InternalStateProvider implements IChai
             _address = await rpc.getConfirmedAta({ solAddress: address, mintAddress: tokenAddress });
             if (!_address) throw new Error('Missing ATA');
           } catch (e: any) {
+            if (isMissingAtaError(e)) {
+              logger.info('No ATA found for %s on mint %s; returning empty token tx history', address, tokenAddress);
+              addressStream.push(null);
+              return;
+            }
             const errMsg = 'Error getting ATA address';
             logger.error(`${errMsg} %o`, e.stack || e.message || e);
             throw new Error(errMsg);

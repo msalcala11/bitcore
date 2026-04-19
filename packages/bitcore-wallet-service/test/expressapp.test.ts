@@ -5,9 +5,12 @@ import 'chai/register-should';
 import sinon from 'sinon';
 import request from 'request';
 import http from 'http';
+import { Readable } from 'stream';
 import log from 'npmlog';
+import { BitcoreLib } from '@bitpay-labs/crypto-wallet-core';
 import config from '../src/config';
 import { Common } from '../src/lib/common';
+import { V8 } from '../src/lib/blockchainexplorers/v8';
 import { WalletService } from '../src/lib/server';
 import { ExpressApp } from '../src/lib/expressapp';
 import { ClientError } from '../src/lib/errors/clienterror';
@@ -110,6 +113,68 @@ describe('ExpressApp', function() {
             args.limit.should.equal(4);
             args.reverse.should.be.true;
             args.noChange.should.be.true;
+            done();
+          });
+        });
+      });
+
+      it('/v1/txhistory should surface upstream errors from plain-text upstream responses', function(done) {
+        class PlainTextError {
+          listTransactions() {
+            class MyReadable extends Readable {
+              constructor(options?) {
+                super(options);
+                process.nextTick(() => {
+                  this.emit('response', {
+                    statusCode: 500,
+                    statusMessage: 'Internal Server Error'
+                  });
+                });
+                this.push('Error getting ATA address');
+                this.push(null);
+              }
+            }
+
+            return new MyReadable();
+          }
+        }
+
+        const server = {
+          getTxHistory: sinon.stub().callsFake((opts, cb) => {
+            const be = new V8({
+              chain: 'sol',
+              network: 'livenet',
+              url: 'http://dummy/',
+              apiPrefix: 'dummyPath',
+              userAgent: 'testAgent',
+              client: PlainTextError as any
+            });
+            const wallet = {
+              beAuthPrivateKey2: new BitcoreLib.PrivateKey().toString(),
+              beAuthPublicKey2: 'dummy-pub-key'
+            };
+
+            be.getTransactions(wallet as any, 0, (err) => cb(err));
+          })
+        };
+        sandbox.stub(WalletService, 'initialize').callsArg(1);
+        sandbox.stub(WalletService, 'getInstanceWithAuth').callsArgWith(1, null, server);
+        start(ExpressApp, function() {
+          const requestOptions = {
+            url: testHost + ':' + testPort + config.basePath + '/v1/txhistory?limit=1000&reverse=1&tokenAddress=EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
+            headers: {
+              'x-identity': 'identity',
+              'x-signature': 'signature'
+            }
+          };
+          request(requestOptions, function(err, res, body) {
+            should.not.exist(err);
+            res.statusCode.should.equal(500);
+            const args = server.getTxHistory.getCalls()[0].args[0];
+            args.limit.should.equal(1000);
+            args.reverse.should.be.true;
+            args.tokenAddress.should.equal('EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v');
+            JSON.parse(body).error.should.equal('Error getting ATA address');
             done();
           });
         });

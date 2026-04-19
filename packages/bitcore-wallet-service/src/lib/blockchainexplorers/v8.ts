@@ -336,6 +336,8 @@ export class V8 {
     const client = this._getAuthClient(wallet);
     let acum = '',
       broken;
+    let responseStatusCode: number | undefined;
+    let responseStatusMessage: string | undefined;
 
     const opts = {
       includeMempool: true,
@@ -349,6 +351,10 @@ export class V8 {
     if (startBlock != null && !isNaN(startBlock)) opts.startBlock = startBlock;
 
     const txStream = client.listTransactions(opts);
+    txStream.on('response', (res: { statusCode?: number; statusMessage?: string }) => {
+      responseStatusCode = res.statusCode;
+      responseStatusMessage = res.statusMessage;
+    });
     txStream.on('data', raw => {
       acum = acum + raw.toString();
     });
@@ -356,6 +362,20 @@ export class V8 {
     txStream.on('end', () => {
       if (broken) {
         return;
+      }
+
+      if (responseStatusCode && responseStatusCode >= 400) {
+        let message = acum.trim() || responseStatusMessage || `HTTP ${responseStatusCode}`;
+        try {
+          const parsed = JSON.parse(acum);
+          message = parsed.error || parsed.message || message;
+        } catch {
+          // Upstream can reply with plain text for early stream failures.
+        }
+
+        const err: Error & { statusCode?: number } = new Error(message);
+        err.statusCode = responseStatusCode;
+        return cb(err);
       }
 
       const txs = [],

@@ -101,6 +101,45 @@ describe('V8', () => {
       });
     });
 
+    it('should surface the upstream error when the response status is non-200', (done) => {
+      class PlainTextError {
+        listTransactions() {
+          class MyReadable extends Readable {
+            constructor(options?) {
+              super(options);
+              process.nextTick(() => {
+                this.emit('response', {
+                  statusCode: 500,
+                  statusMessage: 'Internal Server Error'
+                });
+              });
+              this.push('Error getting ATA address');
+              this.push(null);
+            }
+          }
+
+          return new MyReadable();
+        }
+      }
+
+      const be = new V8({
+        chain: 'sol',
+        network: 'livenet',
+        url: 'http://dummy/',
+        apiPrefix: 'dummyPath',
+        userAgent: 'testAgent',
+        client: PlainTextError as any
+      });
+
+      be.getTransactions(wallet as any, 0, (err, txs) => {
+        should.exist(err);
+        should.not.exist(txs);
+        err.message.should.equal('Error getting ATA address');
+        (err as any).statusCode.should.equal(500);
+        return done();
+      });
+    });
+
   });
 
   describe('#getAddressUtxos', () => {

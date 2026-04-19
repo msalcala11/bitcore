@@ -108,6 +108,21 @@ describe('TxHistory Paging', function() {
     result.items.map(tx => tx.id).should.deep.equal(['id7', 'id6']);
   });
 
+  it('should page token history oldest-first when reverse and tokenAddress are both set', async function() {
+    const cacheNewest = [makeTx(5), makeTx(6), makeTx(7)];
+    const bcNewest = [makeTx(0), makeTx(1), makeTx(2), makeTx(3), makeTx(4)];
+    const { service, bc, wallet } = buildService(cacheNewest, () => bcNewest);
+    wallet.chain = 'sol';
+    wallet.network = 'mainnet';
+
+    const result = await callGetTxHistoryV8(service, bc, wallet, {
+      reverse: true,
+      tokenAddress: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
+    }, 0, 2);
+
+    result.items.map(tx => tx.id).should.deep.equal(['id7', 'id6']);
+  });
+
   it('should keep reverse skip stable when new transactions arrive at the tip', async function() {
     const cacheNewest = [makeTx(5), makeTx(6), makeTx(7)];
     let bcNewest = [makeTx(0), makeTx(1), makeTx(2), makeTx(3), makeTx(4)];
