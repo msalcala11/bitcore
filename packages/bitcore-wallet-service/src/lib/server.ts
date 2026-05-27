@@ -4457,6 +4457,9 @@ export class WalletService implements IWalletService {
       fromBc;
     let streamData;
     let streamKey;
+    // Keep small/default requests on the existing cache-warming path. Large first-page
+    // latest-history requests should not have to stream a whole high-activity wallet.
+    const boundedLatestFetch = skip === 0 && !opts.reverse && Utils.isNumber(limit) && limit >= 100;
 
     let walletCacheKey = wallet.id;
     if (opts.tokenAddress) {
@@ -4525,30 +4528,40 @@ export class WalletService implements IWalletService {
           const startBlock = cacheStatus.updatedHeight || 0;
           logger.debug(' ########### GET HISTORY v8 startBlock/bcH] %o', { startBlock, bcHeight });
 
-          bc.getTransactions(wallet, startBlock, (err, txs) => {
-            if (err) return cb(err);
-            const dustThreshold = ChainService.getDustAmountValue(wallet.chain);
-            this._normalizeTxHistory(walletCacheKey, txs, dustThreshold, bcHeight, (err, inTxs: any[]) => {
+          const txFetchOptions = boundedLatestFetch ? { limit, sort: 'desc' as const } : undefined;
+          bc.getTransactions(
+            wallet,
+            startBlock,
+            (err, txs) => {
               if (err) return cb(err);
+              const dustThreshold = ChainService.getDustAmountValue(wallet.chain);
+              this._normalizeTxHistory(walletCacheKey, txs, dustThreshold, bcHeight, (err, inTxs: any[]) => {
+                if (err) return cb(err);
 
-              if (cacheStatus.tipTxId) {
-                // first item is the most recent tx.
-                // removes already cache txs
-                lastTxs = _.takeWhile(inTxs, tx => {
-                  // cacheTxs are very confirmed, so can't be reorged
-                  return tx.txid != cacheStatus.tipTxId;
-                });
+                if (cacheStatus.tipTxId) {
+                  // first item is the most recent tx.
+                  // removes already cache txs
+                  lastTxs = _.takeWhile(inTxs, tx => {
+                    // cacheTxs are very confirmed, so can't be reorged
+                    return tx.txid != cacheStatus.tipTxId;
+                  });
 
-                // only store stream IF cache is been used.
-                //
-                logger.info(`Storing stream cache for ${walletCacheKey}: ${lastTxs.length} txs`);
-                return this.storage.storeTxHistoryStreamV8(walletCacheKey, streamKey, lastTxs, next);
-              }
+                  if (boundedLatestFetch) {
+                    return next();
+                  }
 
-              lastTxs = inTxs;
-              return next();
-            });
-          });
+                  // only store stream IF cache is been used.
+                  //
+                  logger.info(`Storing stream cache for ${walletCacheKey}: ${lastTxs.length} txs`);
+                  return this.storage.storeTxHistoryStreamV8(walletCacheKey, streamKey, lastTxs, next);
+                }
+
+                lastTxs = inTxs;
+                return next();
+              });
+            },
+            txFetchOptions
+          );
         },
         next => {
           if (opts.reverse) {
@@ -4622,7 +4635,7 @@ export class WalletService implements IWalletService {
           });
         },
         next => {
-          if (streamData) {
+          if (streamData || boundedLatestFetch) {
             return next();
           }
           // We have now TXs from 'tipHeight` to end in `lastTxs`.

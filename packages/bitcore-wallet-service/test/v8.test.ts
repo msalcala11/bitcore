@@ -101,6 +101,41 @@ describe('V8', () => {
       });
     });
 
+    it('should pass bounded latest options to bitcore-node', (done) => {
+      let seenOpts;
+      class BoundedList {
+        listTransactions(opts) {
+          seenOpts = opts;
+          class MyReadable extends Readable {
+            constructor(options?) {
+              super(options);
+              this.push(null);
+            }
+          };
+
+          return new MyReadable();
+        };
+      };
+
+      const be = new V8({
+        chain: 'btc',
+        network: 'livenet',
+        url: 'http://dummy/',
+        apiPrefix: 'dummyPath',
+        userAgent: 'testAgent',
+        client: BoundedList as any,
+      });
+
+      be.getTransactions(wallet as any, 123, (err, txs) => {
+        should.not.exist(err);
+        should.exist(txs);
+        seenOpts.startBlock.should.equal(123);
+        seenOpts.limit.should.equal(100);
+        seenOpts.sort.should.equal('desc');
+        return done();
+      }, { limit: 100, sort: 'desc' });
+    });
+
   });
 
   describe('#getAddressUtxos', () => {

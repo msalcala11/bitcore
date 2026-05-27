@@ -726,10 +726,15 @@ export class BaseEVMStateProvider extends InternalStateProvider implements IChai
     const { populateEffects } = streamParams;
 
     // Store cursor reference for cleanup
+    const sortDirection = params.args?.sort === 'desc' || Number(params.args?.direction) === -1 ? -1 : 1;
+    const limit = Number(params.args?.limit);
     const cursor = EVMTransactionStorage.collection
       .find(query)
-      .sort({ blockTimeNormalized: 1 })
+      .sort({ blockTimeNormalized: sortDirection })
       .addCursorFlag('noCursorTimeout', true);
+    if (Number.isFinite(limit) && limit > 0) {
+      cursor.limit(limit);
+    }
 
     // Add cleanup handlers when client disconnects
     let cursorClosed = false;

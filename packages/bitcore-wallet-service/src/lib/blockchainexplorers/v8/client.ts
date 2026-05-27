@@ -123,7 +123,9 @@ export class Client {
       endBlock,
       includeMempool,
       tokenAddress,
-      multisigContractAddress
+      multisigContractAddress,
+      limit,
+      sort
     } = params;
     let query = '';
     let apiUrl = `${this.baseUrl}/wallet/${pubKey}/transactions?`;
@@ -140,8 +142,15 @@ export class Client {
       apiUrl = `${this.baseUrl}/ethmultisig/transactions/${multisigContractAddress}?`;
     }
     if (includeMempool) {
-      query += 'includeMempool=true';
+      query += 'includeMempool=true&';
     }
+    if (limit) {
+      query += `limit=${limit}&`;
+    }
+    if (sort) {
+      query += `sort=${sort}&`;
+    }
+    query = query.replace(/&$/, '');
     const url = apiUrl + query;
     const signature = this.sign({ method: 'GET', url });
     logger.debug('List transactions %o', url);

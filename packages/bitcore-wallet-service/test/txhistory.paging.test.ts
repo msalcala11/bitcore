@@ -36,6 +36,7 @@ describe('TxHistory Paging', function() {
     let cacheNewest = initialCacheNewest.slice();
     let streamKey: string | null = null;
     let streamItems: TxItem[] | null = null;
+    let lastFetchOptions: any = null;
 
     const service = Object.create(WalletService.prototype) as WalletService & {
       storage: any;
@@ -77,7 +78,10 @@ describe('TxHistory Paging', function() {
     };
 
     const bc = {
-      getTransactions: (_wallet, _startBlock, cb) => cb(null, [])
+      getTransactions: (_wallet, _startBlock, cb, options) => {
+        lastFetchOptions = options;
+        cb(null, []);
+      }
     };
     const wallet = {
       id: 'wallet1',
@@ -85,8 +89,19 @@ describe('TxHistory Paging', function() {
       network: 'livenet'
     };
 
-    return { service, bc, wallet };
+    return { service, bc, wallet, getLastFetchOptions: () => lastFetchOptions };
   }
+
+  it('should bound the upstream fetch for the first newest-first page', async function() {
+    const cacheNewest = [makeTx(5), makeTx(6), makeTx(7)];
+    const bcNewest = [makeTx(0), makeTx(1), makeTx(2), makeTx(3), makeTx(4)];
+    const { service, bc, wallet, getLastFetchOptions } = buildService(cacheNewest, () => bcNewest);
+
+    const result = await callGetTxHistoryV8(service, bc, wallet, {}, 0, 100);
+
+    getLastFetchOptions().should.deep.equal({ limit: 100, sort: 'desc' });
+    result.items.slice(0, 2).map(tx => tx.id).should.deep.equal(['id0', 'id1']);
+  });
 
   it('should preserve newest-first skip behavior by default', async function() {
     const cacheNewest = [makeTx(5), makeTx(6), makeTx(7)];

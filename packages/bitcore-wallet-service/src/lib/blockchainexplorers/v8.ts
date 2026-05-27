@@ -324,7 +324,12 @@ export class V8 {
       .catch(cb);
   }
 
-  getTransactions(wallet: WalletWithOpts, startBlock: number | undefined, cb) {
+  getTransactions(
+    wallet: WalletWithOpts,
+    startBlock: number | undefined,
+    cb,
+    options: { limit?: number; sort?: 'asc' | 'desc' } = {}
+  ) {
     const perfKey = getPerformanceKey('V8getTxs');
     console.time(perfKey);
     if (startBlock) {
@@ -343,7 +348,9 @@ export class V8 {
       payload: {},
       startBlock: undefined,
       tokenAddress: wallet.tokenAddress,
-      multisigContractAddress: wallet.multisigContractAddress
+      multisigContractAddress: wallet.multisigContractAddress,
+      limit: options.limit,
+      sort: options.sort
     };
 
     if (startBlock != null && !isNaN(startBlock)) opts.startBlock = startBlock;

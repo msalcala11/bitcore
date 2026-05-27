@@ -426,12 +426,17 @@ export class InternalStateProvider implements IChainStateService {
       }
     }
 
-    const transactionStream = TransactionStorage.collection
+    const sortDirection = args?.sort === 'desc' || Number(args?.direction) === -1 ? -1 : 1;
+    const limit = Number(args?.limit);
+    const transactionCursor = TransactionStorage.collection
       .find(query)
-      .sort({ blockTimeNormalized: 1 })
+      .sort({ blockTimeNormalized: sortDirection })
       .addCursorFlag('noCursorTimeout', true);
+    if (Number.isFinite(limit) && limit > 0) {
+      transactionCursor.limit(limit);
+    }
     const listTransactionsStream = new this.WalletStreamTransform(wallet);
-    transactionStream.pipe(listTransactionsStream).pipe(res);
+    transactionCursor.pipe(listTransactionsStream).pipe(res);
   }
 
   async getWalletBalance(params: GetWalletBalanceParams): Promise<WalletBalanceType> {
