@@ -606,6 +606,34 @@ describe('Transaction Model', function() {
         ]);
       });
 
+      it('should remove traced ERC20 effects when receipt logs have no matching Transfer', async () => {
+        const tx = missingReceiveTx({
+          calls: [{
+            from: missingReceiveSender,
+            to: busdToken,
+            value: '0',
+            depth: '0',
+            type: 'CALL',
+            abiType: {
+              type: 'ERC20',
+              name: 'transfer',
+              params: [
+                { name: '_to', type: 'address', value: missingReceiveWallet },
+                { name: '_value', type: 'uint256', value: missingReceiveAmount }
+              ]
+            }
+          }],
+          receipt: {
+            ...missingReceiveTx().receipt,
+            logs: []
+          }
+        });
+
+        const effects = EVMTransactionStorage.getEffects(tx as any);
+
+        expect(effects).to.deep.equal([]);
+      });
+
       it('should add receipt-log ERC20 effects to existing partial effects', async () => {
         const nativeEffect = {
           to: missingReceiveWallet,
