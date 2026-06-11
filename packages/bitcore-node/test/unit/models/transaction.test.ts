@@ -664,17 +664,9 @@ describe('Transaction Model', function() {
         expect((tx as any).receiptLogEffectsProcessed).to.equal(true);
       });
 
-      it('should dedupe receipt-log ERC20 effects already found in traces', async () => {
+      it('should replace traced ERC20 effects with receipt-log effects', async () => {
         const extraRecipient = Web3.utils.toChecksumAddress('0x8489935991b0eac9ce9e9330d35b9734ecdf2cad');
         const extraAmount = '2000000000000000000';
-        const tracedEffect = {
-          to: missingReceiveWallet,
-          from: missingReceiveSender,
-          amount: missingReceiveAmount,
-          type: 'ERC20:transfer',
-          contractAddress: busdToken,
-          callStack: '0'
-        };
         const tx = missingReceiveTx({
           calls: [{
             from: missingReceiveSender,
@@ -708,12 +700,49 @@ describe('Transaction Model', function() {
         const effects = EVMTransactionStorage.getEffects(tx as any);
 
         expect(effects).to.deep.equal([
-          tracedEffect,
+          expectedMissingReceiveEffect({
+            callStack: 'log:7'
+          }),
           expectedMissingReceiveEffect({
             to: extraRecipient,
             from: missingReceiveWallet,
             amount: extraAmount,
             callStack: 'log:8'
+          })
+        ]);
+      });
+
+      it('should use receipt-log amounts when traced ERC20 transfer amounts differ', async () => {
+        const tracedAmount = '100000000000000000000';
+        const actualAmount = '95000000000000000000';
+        const tx = missingReceiveTx({
+          calls: [{
+            from: missingReceiveSender,
+            to: busdToken,
+            value: '0',
+            depth: '0',
+            type: 'CALL',
+            abiType: {
+              type: 'ERC20',
+              name: 'transfer',
+              params: [
+                { name: '_to', type: 'address', value: missingReceiveWallet },
+                { name: '_value', type: 'uint256', value: tracedAmount }
+              ]
+            }
+          }],
+          receipt: {
+            ...missingReceiveTx().receipt,
+            logs: [receiptTransferLog({ amount: actualAmount, logIndex: 3 })]
+          }
+        });
+
+        const effects = EVMTransactionStorage.getEffects(tx as any);
+
+        expect(effects).to.deep.equal([
+          expectedMissingReceiveEffect({
+            amount: actualAmount,
+            callStack: 'log:3'
           })
         ]);
       });
