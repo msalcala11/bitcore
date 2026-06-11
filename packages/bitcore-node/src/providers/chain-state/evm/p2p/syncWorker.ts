@@ -6,6 +6,7 @@ import { Storage } from '../../../../services/storage';
 import { wait } from '../../../../utils';
 import { EVMBlockStorage } from '../models/block';
 import { EVMTransactionStorage } from '../models/transaction';
+import { addReceiptsToTxs } from './receipts';
 import { type IRpc, Rpcs } from './rpcs';
 import type { IEVMBlock, IEVMTransactionInProcess } from '../types';
 import type { Web3, Web3Types } from '@bitpay-labs/crypto-wallet-core';
@@ -166,8 +167,13 @@ export class SyncWorker {
     const convertedTxs = block.transactions.map(t => this.txModel.convertRawTx(this.chain, this.network, t, convertedBlock));
     const traceTxs = await this.rpc!.getTransactionsFromBlock(convertedBlock.height);
     this.rpc!.reconcileTraces(convertedBlock, convertedTxs, traceTxs);
+    await this.addReceiptsToTxs(convertedTxs);
     this.txModel.addEffectsToTxs(convertedTxs);
     return { convertedBlock, convertedTxs };
+  }
+
+  async addReceiptsToTxs(txs: IEVMTransactionInProcess[]) {
+    await addReceiptsToTxs(this.web3!, txs);
   }
 
 }

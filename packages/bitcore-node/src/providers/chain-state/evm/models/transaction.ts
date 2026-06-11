@@ -34,6 +34,7 @@ Erc20Decoder.addABI(ERC20Abi);
 function getErc20Decoder() {
   return Erc20Decoder;
 }
+const ERC20_TRANSFER_TOPIC = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef';
 
 const Erc721Decoder = requireUncached('abi-decoder');
 Erc721Decoder.addABI(ERC721Abi);
@@ -256,9 +257,9 @@ export class EVMTransactionModel extends BaseTransaction<IEVMTransaction> {
           );
 
           // If config value is set then only store needed tx properties
-          let leanTx: IEVMTransaction | IEVMTransactionInProcess = tx;
+          let leanTx: IEVMTransaction | IEVMTransactionInProcess = EVMTransactionStorage.stripReceiptLogs(tx);
           if ((Config.chainConfig({ chain, network }) as IEVMNetworkConfig).leanTransactionStorage) {
-            leanTx = EVMTransactionStorage.toLeanTransaction(tx);
+            leanTx = EVMTransactionStorage.toLeanTransaction(leanTx);
           }
           return {
             updateOne: {
@@ -397,6 +398,12 @@ export class EVMTransactionModel extends BaseTransaction<IEVMTransaction> {
   getEffects(tx: IEVMTransactionInProcess): Effect[] {
     const effects = [] as Effect[];
     try {
+      if (this.isFailedReceipt(tx.receipt)) {
+        if (tx.receipt) {
+          tx.receiptLogEffectsProcessed = true;
+        }
+        return effects;
+      }
       if (tx.calls?.length) { // Geth trace calls[]
         for (const call of tx.calls) {
           if (call.value && BigInt(call.value) > 0) {
@@ -444,11 +451,94 @@ export class EVMTransactionModel extends BaseTransaction<IEVMTransaction> {
         if (effect) {
           effects.push(effect);
         }
-      } 
+      }
+      this.addReceiptLogEffects(tx, effects);
+      if (tx.receipt) {
+        tx.receiptLogEffectsProcessed = true;
+      }
     } catch (err) {
       logger.error('Error Getting Effects For TxId: %o ::%o', tx.txid, err);
     }
     return effects;
+  }
+
+  addReceiptLogEffects(tx: IEVMTransactionInProcess, effects: Effect[]) {
+    if (!tx.receipt?.logs?.length || this.isFailedReceipt(tx.receipt)) {
+      return;
+    }
+    const existingCounts = new Map<string, number>();
+    for (const effect of effects) {
+      const key = this._effectDedupeKey(effect);
+      existingCounts.set(key, (existingCounts.get(key) || 0) + 1);
+    }
+    for (const [index, log] of tx.receipt.logs.entries()) {
+      const effect = this._getEffectForErc20TransferLog(log, index);
+      if (!effect) {
+        continue;
+      }
+      const key = this._effectDedupeKey(effect);
+      const existingCount = existingCounts.get(key) || 0;
+      if (existingCount > 0) {
+        existingCounts.set(key, existingCount - 1);
+        continue;
+      }
+      effects.push(effect);
+    }
+  }
+
+  isFailedReceipt(receipt?: { status?: boolean | number | string | bigint }) {
+    const status = receipt?.status;
+    return status === false || status === 0 || status === 0n || status === '0' || status === '0x0';
+  }
+
+  _getEffectForErc20TransferLog(log: any, index: number): Effect | undefined {
+    const topics = log?.topics || log?.raw?.topics;
+    const data = log?.data || log?.raw?.data;
+    if (!Array.isArray(topics) || topics.length !== 3 || this._hexString(topics[0]).toLowerCase() !== ERC20_TRANSFER_TOPIC) {
+      return;
+    }
+    if (typeof data !== 'string' || !/^0x[0-9a-fA-F]{64}$/.test(data)) {
+      return;
+    }
+    const from = this._addressFromTopic(topics[1]);
+    const to = this._addressFromTopic(topics[2]);
+    if (!from || !to || !log.address) {
+      return;
+    }
+    const logIndex = log.logIndex ?? index;
+    return {
+      type: 'ERC20:transfer',
+      to: Web3.utils.toChecksumAddress(to),
+      from: Web3.utils.toChecksumAddress(from),
+      amount: BigInt(data).toString(),
+      contractAddress: Web3.utils.toChecksumAddress(log.address),
+      callStack: `log:${Number(logIndex)}`
+    };
+  }
+
+  _effectDedupeKey(effect: Effect) {
+    return [
+      effect.type || '',
+      effect.contractAddress?.toLowerCase() || '',
+      effect.from?.toLowerCase() || '',
+      effect.to?.toLowerCase() || '',
+      effect.amount
+    ].join(':');
+  }
+
+  _addressFromTopic(topic: any): string | undefined {
+    const topicHex = this._hexString(topic).replace(/^0x/, '');
+    if (topicHex.length < 40) {
+      return;
+    }
+    return '0x' + topicHex.slice(-40);
+  }
+
+  _hexString(value: any) {
+    if (Buffer.isBuffer(value)) {
+      return '0x' + value.toString('hex');
+    }
+    return String(value || '');
   }
 
   /**
@@ -531,11 +621,19 @@ export class EVMTransactionModel extends BaseTransaction<IEVMTransaction> {
    * @param tx - transaction to leanify
    */
   toLeanTransaction(tx: IEVMTransactionInProcess | IEVMTransaction): IEVMTransaction {
+    this.stripReceiptLogs(tx);
     const removableProperties = ['data', 'internal', 'calls', 'abiType'];
     for (const prop of removableProperties) {
       if (tx[prop]) {
         delete tx[prop];
       }
+    }
+    return tx;
+  }
+
+  stripReceiptLogs<T extends IEVMTransactionInProcess | IEVMTransaction>(tx: T): T {
+    if (tx.receipt?.logs) {
+      delete tx.receipt.logs;
     }
     return tx;
   }

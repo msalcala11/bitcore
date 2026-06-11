@@ -220,6 +220,82 @@ describe('Transaction Model', function() {
   });
 
   describe('EVM', function() {
+    const busdToken = Web3.utils.toChecksumAddress('0x4fabb145d64652a948d72533023f6e7a623c7c53');
+    const missingReceiveWallet = Web3.utils.toChecksumAddress('0xa91cfe0dcad33f36f3c9428d48eccbd8a71951b4');
+    const missingReceiveSender = Web3.utils.toChecksumAddress('0xa81011ae274ef6debd3bdab634102c7b6c2c452d');
+    const missingReceiveTxFrom = Web3.utils.toChecksumAddress('0x963737c550e70ffe4d59464542a28604edb2ef9a');
+    const missingReceiveAmount = '114519572370000000000';
+    const transferEventTopic = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef';
+    const topicAddress = (address: string) => '0x' + address.toLowerCase().replace(/^0x/, '').padStart(64, '0');
+    const uint256Data = (value: string) => '0x' + BigInt(value).toString(16).padStart(64, '0');
+    const receiptTransferLog = (overrides: Record<string, any> = {}) => {
+      const {
+        from = missingReceiveSender,
+        to = missingReceiveWallet,
+        amount = missingReceiveAmount,
+        address = busdToken,
+        logIndex = 0,
+        ...logOverrides
+      } = overrides;
+      return {
+        address,
+        blockHash: '0x0ce917ca8e25cccd7228a92895cc11c54fd61479dcec63c3234f16957e1970d9',
+        blockNumber: 15777684,
+        transactionHash: '0xbaf62c1c4de9761a421608634a4ad0f7dfbfa3546227c0f4044322bdda095f43',
+        transactionIndex: 0,
+        logIndex,
+        data: uint256Data(amount),
+        topics: [
+          transferEventTopic,
+          topicAddress(from),
+          topicAddress(to)
+        ],
+        ...logOverrides
+      };
+    };
+    const expectedMissingReceiveEffect = (overrides: Record<string, any> = {}) => ({
+      to: missingReceiveWallet,
+      from: missingReceiveSender,
+      amount: missingReceiveAmount,
+      type: 'ERC20:transfer',
+      contractAddress: busdToken,
+      callStack: 'log:0',
+      ...overrides
+    });
+    const missingReceiveTx = (overrides: Record<string, any> = {}) => ({
+      _id: new ObjectId(),
+      txid: '0xbaf62c1c4de9761a421608634a4ad0f7dfbfa3546227c0f4044322bdda095f43',
+      chain: 'ETH',
+      network: 'mainnet',
+      blockHeight: 15777684,
+      blockHash: '0x0ce917ca8e25cccd7228a92895cc11c54fd61479dcec63c3234f16957e1970d9',
+      blockTime: new Date('2022-10-18T21:28:59.000Z'),
+      blockTimeNormalized: new Date('2022-10-18T21:28:59.000Z'),
+      from: missingReceiveTxFrom,
+      to: missingReceiveSender,
+      value: 0,
+      fee: 44664052457340820,
+      gasPrice: 30483183871,
+      gasLimit: 1904763,
+      nonce: 79903,
+      transactionIndex: 0,
+      data: Buffer.from(''),
+      internal: [],
+      calls: [],
+      receipt: {
+        status: true,
+        transactionHash: '0xbaf62c1c4de9761a421608634a4ad0f7dfbfa3546227c0f4044322bdda095f43',
+        transactionIndex: 0,
+        blockHash: '0x0ce917ca8e25cccd7228a92895cc11c54fd61479dcec63c3234f16957e1970d9',
+        blockNumber: 15777684,
+        cumulativeGasUsed: 0,
+        gasUsed: 0,
+        logs: [receiptTransferLog()]
+      },
+      effects: [],
+      ...overrides
+    });
+
     describe('EVM token wallet history filtering', function() {
       beforeEach(() => {
         sandbox.stub(Config, 'chainConfig').returns({ leanTransactionStorage: false } as any);
@@ -553,6 +629,169 @@ describe('Transaction Model', function() {
     });
 
     describe('getEffects', function() {
+      it('should get ERC20 transfer effects from successful receipt logs', async () => {
+        const effects = EVMTransactionStorage.getEffects(missingReceiveTx() as any);
+
+        expect(effects).to.deep.equal([expectedMissingReceiveEffect()]);
+      });
+
+      it('should not get trace effects from failed EVM transactions', async () => {
+        const tx = missingReceiveTx({
+          calls: [{
+            from: missingReceiveSender,
+            to: busdToken,
+            value: '0',
+            depth: '0',
+            type: 'CALL',
+            abiType: {
+              type: 'ERC20',
+              name: 'transfer',
+              params: [
+                { name: '_to', type: 'address', value: missingReceiveWallet },
+                { name: '_value', type: 'uint256', value: missingReceiveAmount }
+              ]
+            }
+          }],
+          receipt: {
+            ...missingReceiveTx().receipt,
+            status: false
+          }
+        });
+
+        const effects = EVMTransactionStorage.getEffects(tx as any);
+
+        expect(effects).to.deep.equal([]);
+        expect((tx as any).receiptLogEffectsProcessed).to.equal(true);
+      });
+
+      it('should dedupe receipt-log ERC20 effects already found in traces', async () => {
+        const extraRecipient = Web3.utils.toChecksumAddress('0x8489935991b0eac9ce9e9330d35b9734ecdf2cad');
+        const extraAmount = '2000000000000000000';
+        const tracedEffect = {
+          to: missingReceiveWallet,
+          from: missingReceiveSender,
+          amount: missingReceiveAmount,
+          type: 'ERC20:transfer',
+          contractAddress: busdToken,
+          callStack: '0'
+        };
+        const tx = missingReceiveTx({
+          calls: [{
+            from: missingReceiveSender,
+            to: busdToken,
+            value: '0',
+            depth: '0',
+            type: 'CALL',
+            abiType: {
+              type: 'ERC20',
+              name: 'transfer',
+              params: [
+                { name: '_to', type: 'address', value: missingReceiveWallet },
+                { name: '_value', type: 'uint256', value: missingReceiveAmount }
+              ]
+            }
+          }],
+          receipt: {
+            ...missingReceiveTx().receipt,
+            logs: [
+              receiptTransferLog({ logIndex: 7 }),
+              receiptTransferLog({
+                from: missingReceiveWallet,
+                to: extraRecipient,
+                amount: extraAmount,
+                logIndex: 8
+              })
+            ]
+          }
+        });
+
+        const effects = EVMTransactionStorage.getEffects(tx as any);
+
+        expect(effects).to.deep.equal([
+          tracedEffect,
+          expectedMissingReceiveEffect({
+            to: extraRecipient,
+            from: missingReceiveWallet,
+            amount: extraAmount,
+            callStack: 'log:8'
+          })
+        ]);
+      });
+
+      it('should add receipt-log ERC20 effects to existing partial effects', async () => {
+        const nativeEffect = {
+          to: missingReceiveWallet,
+          from: missingReceiveTxFrom,
+          amount: '1',
+          callStack: '0'
+        };
+        const effects = [nativeEffect];
+
+        EVMTransactionStorage.addReceiptLogEffects(missingReceiveTx() as any, effects);
+
+        expect(effects).to.deep.equal([
+          nativeEffect,
+          expectedMissingReceiveEffect()
+        ]);
+      });
+
+      it('should recompute wallets from receipt-log token effects during block resync', async () => {
+        const walletId = new ObjectId('5d93abeba811051da3af9a35');
+        sandbox.stub(Config, 'chainConfig').returns({ leanTransactionStorage: false } as any);
+        sandbox.stub(WalletAddressStorage, 'collection').get(() => ({
+          find: sandbox.stub().callsFake(query => ({
+            toArray: sandbox.stub().resolves(
+              query.address.$in.includes(missingReceiveWallet)
+                ? [{ wallet: walletId, address: missingReceiveWallet }]
+                : []
+            )
+          }))
+        }));
+
+        const tx = missingReceiveTx();
+        EVMTransactionStorage.addEffectsToTxs([tx as any]);
+        const ops = await EVMTransactionStorage.addTransactions({
+          txs: [tx as any],
+          height: 15777684,
+          blockTime: tx.blockTime,
+          blockHash: tx.blockHash,
+          blockTimeNormalized: tx.blockTimeNormalized,
+          chain: 'ETH',
+          network: 'mainnet',
+          initialSyncComplete: true
+        });
+        const storedTx = ops[0].updateOne.update.$set;
+
+        expect(storedTx.effects).to.deep.equal([expectedMissingReceiveEffect()]);
+        expect(storedTx.wallets.map(wallet => wallet.toHexString())).to.deep.equal([walletId.toHexString()]);
+      });
+
+      it('should not persist receipt logs after deriving lean EVM transaction effects', async () => {
+        sandbox.stub(Config, 'chainConfig').returns({ leanTransactionStorage: true } as any);
+        sandbox.stub(WalletAddressStorage, 'collection').get(() => ({
+          find: sandbox.stub().returns({
+            toArray: sandbox.stub().resolves([])
+          })
+        }));
+
+        const tx = missingReceiveTx();
+        EVMTransactionStorage.addEffectsToTxs([tx as any]);
+        const ops = await EVMTransactionStorage.addTransactions({
+          txs: [tx as any],
+          height: 15777684,
+          blockTime: tx.blockTime,
+          blockHash: tx.blockHash,
+          blockTimeNormalized: tx.blockTimeNormalized,
+          chain: 'ETH',
+          network: 'mainnet',
+          initialSyncComplete: true
+        });
+        const storedTx = ops[0].updateOne.update.$set;
+
+        expect(storedTx.effects).to.deep.equal([expectedMissingReceiveEffect()]);
+        expect(storedTx.receipt!.logs).to.equal(undefined);
+      });
+
       it('should get effects for simple USDC transaction', async () => {
         const effects = EVMTransactionStorage.getEffects(EvmTxData.SimpleUSDCTransfer);
         expect(effects).to.deep.equal([{

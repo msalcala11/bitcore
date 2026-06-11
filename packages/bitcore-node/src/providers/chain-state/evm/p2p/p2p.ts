@@ -9,6 +9,7 @@ import { wait } from '../../../../utils';
 import { BaseEVMStateProvider } from '../api/csp';
 import { EVMBlockModel, EVMBlockStorage } from '../models/block';
 import { EVMTransactionModel, EVMTransactionStorage } from '../models/transaction';
+import { addReceiptsToTxs } from './receipts';
 import { type IRpc, Rpcs } from './rpcs';
 import { MultiThreadSync } from './sync';
 import type { IEVMNetworkConfig } from '../../../../types/Config';
@@ -374,8 +375,13 @@ export class EVMP2pWorker extends BaseP2PWorker<IEVMBlock> {
     const convertedTxs = block.transactions.map(t => this.txModel.convertRawTx(this.chain, this.network, t, convertedBlock));
     const traceTxs = await this.rpc!.getTransactionsFromBlock(convertedBlock.height);
     this.rpc!.reconcileTraces(convertedBlock, convertedTxs, traceTxs);
+    await this.addReceiptsToTxs(convertedTxs);
     this.txModel.addEffectsToTxs(convertedTxs);
     return { convertedBlock, convertedTxs };
+  }
+
+  async addReceiptsToTxs(txs: IEVMTransactionInProcess[]) {
+    await addReceiptsToTxs(this.web3!, txs);
   }
 
   async stop() {

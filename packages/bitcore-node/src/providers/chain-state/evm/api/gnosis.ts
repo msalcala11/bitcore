@@ -225,7 +225,9 @@ export class GnosisApi {
     req.on('close', cleanupCursor);
     res.on('close', cleanupCursor);
 
-    transactionStream = cursor.pipe(populateEffects); // For old db entries
+    transactionStream = cursor
+      .pipe(populateReceipt) // Adds receipts before effects so old ERC20 rows can use receipt logs.
+      .pipe(populateEffects); // For old db entries
 
     if (multisigContractAddress) {
       const multisigTransform = new MultisigRelatedFilterTransform(normalizedMultisigContractAddress, tokenAddress);
@@ -233,7 +235,6 @@ export class GnosisApi {
     }
 
     transactionStream
-      .pipe(populateReceipt)
       .pipe(ethTransactionTransform)
       .pipe(res);
   }
