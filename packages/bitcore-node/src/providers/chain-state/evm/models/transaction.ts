@@ -466,16 +466,30 @@ export class EVMTransactionModel extends BaseTransaction<IEVMTransaction> {
     if (!tx.receipt?.logs?.length || this.isFailedReceipt(tx.receipt)) {
       return;
     }
-    const existingCounts = new Map<string, number>();
-    for (const effect of effects) {
-      const key = this._effectDedupeKey(effect);
-      existingCounts.set(key, (existingCounts.get(key) || 0) + 1);
-    }
+    const logEffects: Effect[] = [];
     for (const [index, log] of tx.receipt.logs.entries()) {
       const effect = this._getEffectForErc20TransferLog(log, index);
-      if (!effect) {
-        continue;
+      if (effect) {
+        logEffects.push(effect);
       }
+    }
+    if (!logEffects.length) {
+      return;
+    }
+
+    const logTransferKeys = new Set(logEffects.map(effect => this._erc20TransferKey(effect)));
+    const existingCounts = new Map<string, number>();
+    const filteredEffects = effects.filter(effect => {
+      if (this._isErc20TransferEffect(effect) && logTransferKeys.has(this._erc20TransferKey(effect))) {
+        return false;
+      }
+      const key = this._effectDedupeKey(effect);
+      existingCounts.set(key, (existingCounts.get(key) || 0) + 1);
+      return true;
+    });
+    effects.splice(0, effects.length, ...filteredEffects);
+
+    for (const effect of logEffects) {
       const key = this._effectDedupeKey(effect);
       const existingCount = existingCounts.get(key) || 0;
       if (existingCount > 0) {
@@ -484,6 +498,18 @@ export class EVMTransactionModel extends BaseTransaction<IEVMTransaction> {
       }
       effects.push(effect);
     }
+  }
+
+  _isErc20TransferEffect(effect: Effect) {
+    return effect.type === 'ERC20:transfer' && !!effect.contractAddress;
+  }
+
+  _erc20TransferKey(effect: Effect) {
+    return [
+      effect.contractAddress?.toLowerCase() || '',
+      effect.from?.toLowerCase() || '',
+      effect.to?.toLowerCase() || ''
+    ].join(':');
   }
 
   isFailedReceipt(receipt?: { status?: boolean | number | string | bigint }) {
