@@ -57,6 +57,7 @@ export interface GetWeb3Response { rpc: EthRpc; web3: Web3; dataType: string; la
 
 export interface BuildWalletTxsStreamParams {
   transactionStream: TransformWithEventPipe;
+  populateReceipt: PopulateReceiptTransform;
   populateEffects: PopulateEffectsForAddressTransform;
   walletAddresses: string[];
 }
@@ -439,18 +440,85 @@ export class BaseEVMStateProvider extends InternalStateProvider implements IChai
   }
 
   async populateReceipt(tx: MongoBound<IEVMTransaction>) {
-    if (!tx.receipt) {
+    const update = {} as Partial<IEVMTransaction>;
+    let shouldUpdate = false;
+    const shouldRefetchForLogEffects = this.shouldRefetchReceiptForLogEffects(tx);
+    let receiptFetched = false;
+    if (!tx.receipt || shouldRefetchForLogEffects) {
       const receipt = await this.getReceipt(tx.network, tx.txid);
       if (receipt) {
-        const fee = Number(BigInt(receipt.gasUsed) * BigInt(tx.gasPrice));
-        await EVMTransactionStorage.collection.updateOne({ _id: tx._id }, { $set: { receipt, fee } });
         tx.receipt = receipt as any;
-        tx.fee = fee;
+        update.receipt = tx.receipt;
+        receiptFetched = true;
+        const fee = this.getReceiptFee(tx, receipt);
+        if (fee !== undefined) {
+          tx.fee = fee;
+          update.fee = fee;
+        }
+        shouldUpdate = true;
       }
     }
+
+    if (tx.receipt && (!shouldRefetchForLogEffects || receiptFetched)) {
+      const previousEffectCount = tx.effects?.length || 0;
+      if (EVMTransactionStorage.isFailedReceipt(tx.receipt)) {
+        tx.effects = [];
+        if (previousEffectCount) {
+          update.effects = tx.effects;
+          shouldUpdate = true;
+        }
+      } else if (previousEffectCount) {
+        const effects = [...tx.effects!];
+        EVMTransactionStorage.addReceiptLogEffects(tx as IEVMTransactionInProcess, effects);
+        tx.effects = effects;
+      } else {
+        tx.effects = EVMTransactionStorage.getEffects(tx as IEVMTransactionInProcess);
+      }
+      if (tx.effects.length > previousEffectCount) {
+        update.effects = tx.effects;
+        shouldUpdate = true;
+      }
+      if (!tx.receiptLogEffectsProcessed) {
+        tx.receiptLogEffectsProcessed = true;
+        update.receiptLogEffectsProcessed = true;
+        shouldUpdate = true;
+      }
+    }
+
     // logs can be very large and are not currently needed for any use case in this codebase.
-    delete tx.receipt?.logs;
+    if (tx.receipt?.logs) {
+      EVMTransactionStorage.stripReceiptLogs(tx as IEVMTransactionInProcess);
+      update.receipt = tx.receipt;
+      shouldUpdate = true;
+    }
+
+    if (shouldUpdate) {
+      await EVMTransactionStorage.collection.updateOne({ _id: tx._id }, { $set: update });
+    }
     return tx;
+  }
+
+  shouldRefetchReceiptForLogEffects(tx: MongoBound<IEVMTransaction>) {
+    return !!tx.receipt &&
+      !tx.receipt.logs?.length &&
+      !tx.receiptLogEffectsProcessed &&
+      !EVMTransactionStorage.isFailedReceipt(tx.receipt);
+  }
+
+  getReceiptFee(tx: Pick<IEVMTransaction, 'gasPrice'>, receipt: any) {
+    const gasUsed = this.toOptionalBigInt(receipt.gasUsed);
+    const gasPrice = this.toOptionalBigInt(receipt.effectiveGasPrice ?? tx.gasPrice);
+    if (gasUsed === undefined || gasPrice === undefined || gasUsed < 0n || gasPrice < 0n) {
+      return;
+    }
+    return Number(gasUsed * gasPrice);
+  }
+
+  toOptionalBigInt(value: any): bigint | undefined {
+    if (value === undefined || value === null || value === '') {
+      return;
+    }
+    return BigInt(value);
   }
 
   populateEffects(tx: MongoBound<IEVMTransaction>) {
@@ -694,6 +762,7 @@ export class BaseEVMStateProvider extends InternalStateProvider implements IChai
 
       const streamParams: BuildWalletTxsStreamParams = {
         transactionStream,
+        populateReceipt,
         populateEffects,
         walletAddresses
       };
@@ -705,7 +774,6 @@ export class BaseEVMStateProvider extends InternalStateProvider implements IChai
       }
 
       transactionStream = transactionStream
-        .eventPipe(populateReceipt)
         .eventPipe(ethTransactionTransform);
 
       try {
@@ -723,7 +791,7 @@ export class BaseEVMStateProvider extends InternalStateProvider implements IChai
   async _buildWalletTransactionsStream(params: StreamWalletTransactionsParams, streamParams: BuildWalletTxsStreamParams) {
     const query = this.getWalletTransactionQuery(params);
     let { transactionStream } = streamParams;
-    const { populateEffects } = streamParams;
+    const { populateReceipt, populateEffects } = streamParams;
 
     // Store cursor reference for cleanup
     const cursor = EVMTransactionStorage.collection
@@ -751,7 +819,9 @@ export class BaseEVMStateProvider extends InternalStateProvider implements IChai
     // Pipe cursor to transform stream
     transactionStream = cursor.pipe(new TransformWithEventPipe({ objectMode: true, passThrough: true }));
 
-    transactionStream = transactionStream.eventPipe(populateEffects); // For old db entries
+    transactionStream = transactionStream
+      .eventPipe(populateReceipt) // Adds receipts before effects so old ERC20 rows can use receipt logs.
+      .eventPipe(populateEffects); // For old db entries
 
     if (params.args.tokenAddress) {
       const erc20Transform = new Erc20RelatedFilterTransform(params.args.tokenAddress);

@@ -1,4 +1,5 @@
 import { expect } from 'chai';
+import { ObjectId } from 'bson';
 import * as sinon from 'sinon';
 import { CryptoRpc } from '@bitpay-labs/crypto-rpc';
 import { EthDater } from '../../../../src/utils/ethDater';
@@ -7,6 +8,7 @@ import { MoralisStateProvider } from '../../../../src/modules/moralis/api/csp';
 import { CacheStorage } from '../../../../src/models/cache';
 import { BaseEVMStateProvider } from '../../../../src/providers/chain-state/evm/api/csp';
 import { EVMBlockStorage } from '../../../../src/providers/chain-state/evm/models/block';
+import { EVMTransactionStorage } from '../../../../src/providers/chain-state/evm/models/transaction';
 import { Config } from '../../../../src/services/config';
 
 
@@ -511,25 +513,196 @@ describe('MultiProviderEVMStateProvider: _buildWalletTransactionsStream tokenAdd
 
   it('routes to streamERC20Transfers when args.tokenAddress is set', async function() {
     const { provider, adapter } = buildProviderWithFakeAdapter();
-    const transactionStream: any = { eventPipe: (s: any) => s };
-    await (provider as any)._buildWalletTransactionsStream(
+    const transactionStream: any = {};
+    const result = await (provider as any)._buildWalletTransactionsStream(
       { network: 'mainnet', args: { tokenAddress: '0xtoken' } },
       { transactionStream, walletAddresses: ['0xaddr1', '0xaddr2'] }
     );
     expect(adapter.streamERC20Transfers.callCount).to.equal(2);
     expect(adapter.streamAddressTransactions.callCount).to.equal(0);
     expect(adapter.streamERC20Transfers.firstCall.args[0].tokenAddress).to.equal('0xtoken');
+    expect(result).to.equal(transactionStream);
   });
 
   it('routes to streamAddressTransactions when no tokenAddress is set', async function() {
     const { provider, adapter } = buildProviderWithFakeAdapter();
-    const transactionStream: any = { eventPipe: (s: any) => s };
-    await (provider as any)._buildWalletTransactionsStream(
+    const transactionStream: any = {};
+    const result = await (provider as any)._buildWalletTransactionsStream(
       { network: 'mainnet', args: {} },
       { transactionStream, walletAddresses: ['0xaddr1'] }
     );
     expect(adapter.streamAddressTransactions.callCount).to.equal(1);
     expect(adapter.streamERC20Transfers.callCount).to.equal(0);
+    expect(result).to.equal(transactionStream);
+  });
+});
+
+describe('BaseEVMStateProvider: populateReceipt', function() {
+  let cfgStub: sinon.SinonStub;
+  let sandbox: sinon.SinonSandbox;
+
+  const busdToken = '0x4Fabb145d64652a948d72533023f6E7A623C7C53';
+  const sourceAddress = '0xa81011Ae274eF6deBd3BDaB634102c7b6c2C452D';
+  const walletAddress = '0xa91cFe0DcAd33F36f3c9428D48eCCBD8A71951b4';
+  const txid = '0xbaf62c1c4de9761a421608634a4ad0f7dfbfa3546227c0f4044322bdda095f43';
+  const erc20TransferTopic = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef';
+  const amount = '114519572370000000000';
+
+  const topicForAddress = (address: string) => `0x${address.toLowerCase().replace('0x', '').padStart(64, '0')}`;
+  const uint256 = (value: string) => `0x${BigInt(value).toString(16).padStart(64, '0')}`;
+  const receiptWithTransferLog = () => ({
+    status: true,
+    transactionHash: txid,
+    transactionIndex: 0,
+    blockHash: '0x0ce917ca8e25cccd7228a92895cc11c54fd61479dcec63c3234f16957e1970d9',
+    blockNumber: 15777684,
+    cumulativeGasUsed: 0,
+    gasUsed: 100,
+    logs: [{
+      address: busdToken,
+      topics: [erc20TransferTopic, topicForAddress(sourceAddress), topicForAddress(walletAddress)],
+      data: uint256(amount),
+      logIndex: 7
+    }]
+  });
+  const expectedTransferEffect = () => ({
+    type: 'ERC20:transfer',
+    to: walletAddress,
+    from: sourceAddress,
+    amount,
+    contractAddress: busdToken,
+    callStack: 'log:7'
+  });
+
+  before(function() {
+    cfgStub = sinon.stub(Config, 'get').returns({ chains: { ETH: {} } } as any);
+    (BaseEVMStateProvider as any).rpcInitialized = { ETH: true };
+  });
+
+  after(function() { cfgStub.restore(); });
+  beforeEach(function() { sandbox = sinon.createSandbox(); });
+  afterEach(function() { sandbox.restore(); });
+
+  it('derives ERC20 effects from fetched receipt logs before stripping the logs', async function() {
+    const updateOne = sandbox.stub().resolves();
+    sandbox.stub(EVMTransactionStorage, 'collection').get(() => ({ updateOne }));
+    const provider = new BaseEVMStateProvider('ETH');
+    sandbox.stub(provider, 'getReceipt').resolves(receiptWithTransferLog() as any);
+    const tx = {
+      _id: new ObjectId(),
+      txid,
+      chain: 'ETH',
+      network: 'mainnet',
+      from: '0x963737C550E70FFe4D59464542a28604eDb2eF9a',
+      to: sourceAddress,
+      value: 0,
+      gasPrice: 20,
+      gasLimit: 1500000,
+      nonce: 79903,
+      transactionIndex: 0,
+      effects: []
+    } as any;
+
+    await provider.populateReceipt(tx);
+
+    const expectedEffect = expectedTransferEffect();
+    expect(tx.fee).to.equal(2000);
+    expect(tx.effects).to.deep.equal([expectedEffect]);
+    expect(tx.receipt.logs).to.equal(undefined);
+    expect(updateOne.firstCall.args[1].$set).to.deep.equal({
+      receipt: tx.receipt,
+      fee: 2000,
+      effects: [expectedEffect],
+      receiptLogEffectsProcessed: true
+    });
+  });
+
+  it('refetches stripped receipts before merging ERC20 effects into existing partial effects', async function() {
+    const updateOne = sandbox.stub().resolves();
+    sandbox.stub(EVMTransactionStorage, 'collection').get(() => ({ updateOne }));
+    const provider = new BaseEVMStateProvider('ETH');
+    const getReceipt = sandbox.stub(provider, 'getReceipt').resolves(receiptWithTransferLog() as any);
+    const nativeEffect = {
+      to: walletAddress,
+      from: '0x963737C550E70FFe4D59464542a28604eDb2eF9a',
+      amount: '1',
+      callStack: '0'
+    };
+    const tx = {
+      _id: new ObjectId(),
+      txid,
+      chain: 'ETH',
+      network: 'mainnet',
+      from: nativeEffect.from,
+      to: sourceAddress,
+      value: 0,
+      gasPrice: 20,
+      gasLimit: 1500000,
+      nonce: 79903,
+      transactionIndex: 0,
+      receipt: {
+        status: true,
+        transactionHash: txid,
+        transactionIndex: 0,
+        blockHash: '0x0ce917ca8e25cccd7228a92895cc11c54fd61479dcec63c3234f16957e1970d9',
+        blockNumber: 15777684,
+        cumulativeGasUsed: 0,
+        gasUsed: 100
+      },
+      effects: [nativeEffect]
+    } as any;
+
+    await provider.populateReceipt(tx);
+
+    const effects = [nativeEffect, expectedTransferEffect()];
+    expect(getReceipt.callCount).to.equal(1);
+    expect(tx.effects).to.deep.equal(effects);
+    expect(tx.receipt.logs).to.equal(undefined);
+    expect(updateOne.firstCall.args[1].$set).to.deep.equal({
+      receipt: tx.receipt,
+      fee: 2000,
+      effects,
+      receiptLogEffectsProcessed: true
+    });
+  });
+
+  it('clears existing effects when the stored receipt failed', async function() {
+    const updateOne = sandbox.stub().resolves();
+    sandbox.stub(EVMTransactionStorage, 'collection').get(() => ({ updateOne }));
+    const provider = new BaseEVMStateProvider('ETH');
+    const getReceipt = sandbox.stub(provider, 'getReceipt').resolves(receiptWithTransferLog() as any);
+    const tx = {
+      _id: new ObjectId(),
+      txid,
+      chain: 'ETH',
+      network: 'mainnet',
+      from: '0x963737C550E70FFe4D59464542a28604eDb2eF9a',
+      to: sourceAddress,
+      value: 0,
+      gasPrice: 20,
+      gasLimit: 1500000,
+      nonce: 79903,
+      transactionIndex: 0,
+      receipt: {
+        status: false,
+        transactionHash: txid,
+        transactionIndex: 0,
+        blockHash: '0x0ce917ca8e25cccd7228a92895cc11c54fd61479dcec63c3234f16957e1970d9',
+        blockNumber: 15777684,
+        cumulativeGasUsed: 0,
+        gasUsed: 100
+      },
+      effects: [expectedTransferEffect()]
+    } as any;
+
+    await provider.populateReceipt(tx);
+
+    expect(getReceipt.callCount).to.equal(0);
+    expect(tx.effects).to.deep.equal([]);
+    expect(updateOne.firstCall.args[1].$set).to.deep.equal({
+      effects: [],
+      receiptLogEffectsProcessed: true
+    });
   });
 });
 
