@@ -447,12 +447,14 @@ export class BaseEVMStateProvider extends InternalStateProvider implements IChai
     let receiptFetched = false;
     if (!tx.receipt || shouldRefetchForLogEffects) {
       let receipt;
+      let receiptFetchErrored = false;
       try {
         receipt = await this.getReceipt(tx.network, tx.txid);
       } catch (err) {
         if (!tx.receipt) {
           throw err;
         }
+        receiptFetchErrored = true;
         logger.warn('Unable to refetch receipt logs for tx %s; returning stored receipt: %o', tx.txid, err);
       }
       if (receipt) {
@@ -465,7 +467,7 @@ export class BaseEVMStateProvider extends InternalStateProvider implements IChai
           update.fee = fee;
         }
         shouldUpdate = true;
-      } else if (shouldRefetchForLogEffects) {
+      } else if (shouldRefetchForLogEffects && !receiptFetchErrored) {
         tx.receiptLogEffectsUnavailable = true;
         update.receiptLogEffectsUnavailable = true;
         shouldUpdate = true;
