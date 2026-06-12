@@ -616,6 +616,7 @@ describe('BaseEVMStateProvider: populateReceipt', function() {
       transactionIndex: '0x0',
       blockHash: '0x0ce917ca8e25cccd7228a92895cc11c54fd61479dcec63c3234f16957e1970d9',
       blockNumber: '0xf0b294',
+      contractAddress: null,
       cumulativeGasUsed: '0x1',
       gasUsed: '0x64',
       effectiveGasPrice: '0x14',
@@ -631,6 +632,7 @@ describe('BaseEVMStateProvider: populateReceipt', function() {
     expect(receipt.blockNumber).to.equal(15774356);
     expect(receipt.gasUsed).to.equal(100);
     expect((receipt as any).effectiveGasPrice).to.equal(20);
+    expect((receipt as any).contractAddress).to.equal(undefined);
     expect((receipt as any).logsBloom).to.equal(undefined);
     expect((receipt as any).type).to.equal(undefined);
   });
