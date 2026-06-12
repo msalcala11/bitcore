@@ -3991,6 +3991,14 @@ export class WalletService implements IWalletService {
           return total > 0 && Number.isFinite(txSatoshis) && Number.isFinite(total) && txSatoshis === total;
         }
 
+        function hasZeroSatoshis(tx) {
+          try {
+            return BigInt(tx.satoshis) === 0n;
+          } catch {
+            return Number(tx.satoshis) === 0;
+          }
+        }
+
         function recreateAbiType(tx) {
           // Check if any top-level or receipt-log-derived effects are ERC20 transfers
           const { effects } = tx;
@@ -4007,7 +4015,9 @@ export class WalletService implements IWalletService {
                 (satoshisMatchesEffect(tx, e) || satoshisMatchesEffectTotal(tx, effects, e.contractAddress));
               const isDirectTokenCall = isReceiptLogEffect &&
                 txAddress &&
-                txAddress == e.contractAddress?.toLowerCase();
+                txAddress == e.contractAddress?.toLowerCase() &&
+                hasZeroSatoshis(tx) &&
+                tx.from?.toLowerCase() == e.from?.toLowerCase();
               return e.type == 'ERC20:transfer' && (e.callStack == '' || isTokenHistoryRow || isDirectTokenCall);
             });
             if (erc20Transfer) {

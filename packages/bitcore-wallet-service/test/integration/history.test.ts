@@ -1122,6 +1122,7 @@ describe('History', function() {
         height: BCHEIGHT,
         satoshis: 0,
         address: '0x4Fabb145d64652a948d72533023f6E7A623C7C53',
+        from: '0xa81011Ae274eF6deBd3BDaB634102c7b6c2C452D',
         chain: 'ETH',
         network: 'mainnet',
         effects: [{
@@ -1140,6 +1141,38 @@ describe('History', function() {
         should.exist(txs);
         txs.length.should.equal(1);
         txs[0].abiType.should.deep.equal({ name: 'transfer' });
+        done();
+      });
+    });
+
+    it('should not recreate abiType for native value calls to token contracts', function(done) {
+      const txs = [{
+        id: 'receipt-log-token-native-value',
+        txid: '0xbaf62c1c4de9761a421608634a4ad0f7dfbfa3546227c0f4044322bdda095f43',
+        blockTime: '2022-10-18T21:28:59.000Z',
+        category: 'send',
+        height: BCHEIGHT,
+        satoshis: -500,
+        address: '0x4Fabb145d64652a948d72533023f6E7A623C7C53',
+        from: '0xa81011Ae274eF6deBd3BDaB634102c7b6c2C452D',
+        chain: 'ETH',
+        network: 'mainnet',
+        effects: [{
+          type: 'ERC20:transfer',
+          to: '0xa91cFe0DcAd33F36f3c9428D48eCCBD8A71951b4',
+          from: '0x0000000000000000000000000000000000000000',
+          amount: '1000',
+          contractAddress: '0x4Fabb145d64652a948d72533023f6E7A623C7C53',
+          callStack: 'log:7'
+        }]
+      }];
+      helpers.stubHistory(null, null, txs);
+
+      server.getTxHistory({}, function(err, txs) {
+        should.not.exist(err);
+        should.exist(txs);
+        txs.length.should.equal(1);
+        should.not.exist(txs[0].abiType);
         done();
       });
     });

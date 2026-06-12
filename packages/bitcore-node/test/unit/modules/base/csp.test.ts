@@ -1247,6 +1247,8 @@ describe('PopulateReceiptTransform', function() {
     expect(populateReceipt.callCount).to.equal(1);
     expect(rows.map(row => row.value)).to.deep.equal(['100', '200']);
     expect(rows.map(row => row.effects)).to.deep.equal([[transferEffect], [transferEffect]]);
+    expect(rows[0].effects).to.not.equal(rows[1].effects);
+    expect(rows[0].receipt).to.not.equal(rows[1].receipt);
     expect(rows.map(row => row.receiptLogEffectsProcessed)).to.deep.equal([true, true]);
   });
 });

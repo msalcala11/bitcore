@@ -193,7 +193,7 @@ describe('P2P Service', function() {
       type: '0x2',
       logs: []
     }));
-    const request = sandbox.stub().resolves(receipts);
+    const request = sandbox.stub().resolves({ jsonrpc: '2.0', id: 1, result: receipts });
     const web3 = {
       currentProvider: { request },
       eth: {
@@ -204,7 +204,11 @@ describe('P2P Service', function() {
     await addReceiptsToTxs(web3 as any, txs, { concurrency: 2, retries: 1, retryDelayMs: 0 });
 
     expect(request.calledOnce).to.equal(true);
-    expect(request.firstCall.args[0]).to.deep.equal({ method: 'eth_getBlockReceipts', params: ['0xblock'] });
+    const payload = request.firstCall.args[0];
+    expect(payload.jsonrpc).to.equal('2.0');
+    expect(payload.id).to.be.a('number');
+    expect(payload.method).to.equal('eth_getBlockReceipts');
+    expect(payload.params).to.deep.equal(['0xblock']);
     expect(web3.eth.getTransactionReceipt.called).to.equal(false);
     expect(txs.map(tx => tx.receipt.transactionHash)).to.deep.equal(['0x0', '0x1', '0x2']);
     expect(txs.map(tx => tx.receipt.status)).to.deep.equal([true, true, true]);
