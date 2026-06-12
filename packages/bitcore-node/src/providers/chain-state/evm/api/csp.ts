@@ -462,6 +462,7 @@ export class BaseEVMStateProvider extends InternalStateProvider implements IChai
     let shouldUpdate = false;
     const shouldRefetchForLogEffects = this.shouldRefetchReceiptForLogEffects(tx);
     let receiptFetched = false;
+    let receiptUnavailable = false;
     if (!tx.receipt || shouldRefetchForLogEffects) {
       let receipt;
       let receiptFetchErrored = false;
@@ -489,6 +490,7 @@ export class BaseEVMStateProvider extends InternalStateProvider implements IChai
       } else if (shouldRefetchForLogEffects && !receiptFetchErrored) {
         tx.receiptLogEffectsUnavailable = true;
         update.receiptLogEffectsUnavailable = true;
+        receiptUnavailable = true;
         shouldUpdate = true;
       }
     }
@@ -498,7 +500,7 @@ export class BaseEVMStateProvider extends InternalStateProvider implements IChai
     // regress stored effects: the stored receipt has its logs stripped, so getEffects() can no
     // longer reconcile against them and would re-add trace-derived ERC20 effects that the logs
     // previously dropped.
-    if (tx.receipt && (receiptFetched || (!shouldRefetchForLogEffects && !tx.receiptLogEffectsProcessed))) {
+    if (tx.receipt && (receiptFetched || receiptUnavailable || (!shouldRefetchForLogEffects && !tx.receiptLogEffectsProcessed && !tx.receiptLogEffectsUnavailable))) {
       const previousEffectCount = tx.effects?.length || 0;
       const previousEffects = tx.effects ? JSON.stringify(tx.effects) : undefined;
       const wasReceiptLogEffectsProcessed = !!tx.receiptLogEffectsProcessed;

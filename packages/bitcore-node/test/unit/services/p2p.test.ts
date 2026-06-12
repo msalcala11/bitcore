@@ -251,12 +251,43 @@ describe('P2P Service', function() {
     expect(txs.map(tx => tx.receipt.transactionHash)).to.deep.equal(['0x0', '0x1']);
   });
 
-  it('should remember non-array block receipt responses as unsupported', async function() {
+  it('should treat null block receipt responses as transient', async function() {
     const txs = [
       { txid: '0x0', blockHash: '0xblock0', blockHeight: 1, gasPrice: 50 },
       { txid: '0x1', blockHash: '0xblock1', blockHeight: 2, gasPrice: 50 }
     ] as any[];
     const request = sandbox.stub().resolves(null);
+    const web3 = {
+      currentProvider: { request },
+      eth: {
+        getTransactionReceipt: sandbox.stub().callsFake(async (txid: string) => ({
+          status: true,
+          transactionHash: txid,
+          transactionIndex: 0,
+          blockHash: '0xblock',
+          blockNumber: 1,
+          cumulativeGasUsed: 1,
+          gasUsed: 10,
+          effectiveGasPrice: 20,
+          logs: []
+        }))
+      }
+    };
+
+    await addReceiptsToTxs(web3 as any, [txs[0]], { concurrency: 1, retries: 0, retryDelayMs: 0 });
+    await addReceiptsToTxs(web3 as any, [txs[1]], { concurrency: 1, retries: 0, retryDelayMs: 0 });
+
+    expect(request.callCount).to.equal(2);
+    expect(web3.eth.getTransactionReceipt.callCount).to.equal(2);
+    expect(txs.map(tx => tx.receipt.transactionHash)).to.deep.equal(['0x0', '0x1']);
+  });
+
+  it('should remember invalid non-array block receipt responses as unsupported', async function() {
+    const txs = [
+      { txid: '0x0', blockHash: '0xblock0', blockHeight: 1, gasPrice: 50 },
+      { txid: '0x1', blockHash: '0xblock1', blockHeight: 2, gasPrice: 50 }
+    ] as any[];
+    const request = sandbox.stub().resolves({ jsonrpc: '2.0', id: 1, result: { unexpected: true } });
     const web3 = {
       currentProvider: { request },
       eth: {
