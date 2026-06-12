@@ -1043,6 +1043,57 @@ describe('History', function() {
       });
     });
 
+    it('should preserve effects when merging duplicate ERC20 receives', function(done) {
+      const txs = [{
+        id: 'batch-receive-1',
+        txid: '0xbaf62c1c4de9761a421608634a4ad0f7dfbfa3546227c0f4044322bdda095f43',
+        blockTime: '2022-10-18T21:28:59.000Z',
+        category: 'receive',
+        height: BCHEIGHT,
+        satoshis: 1000,
+        address: '0xa91cFe0DcAd33F36f3c9428D48eCCBD8A71951b4',
+        chain: 'ETH',
+        network: 'mainnet',
+        effects: [{
+          type: 'ERC20:transfer',
+          to: '0xa91cFe0DcAd33F36f3c9428D48eCCBD8A71951b4',
+          from: '0x8489935991b0EAC9ce9e9330D35b9734EcDF2CAd',
+          amount: '1000',
+          contractAddress: '0x4Fabb145d64652a948d72533023f6E7A623C7C53',
+          callStack: 'log:7'
+        }]
+      }, {
+        id: 'batch-receive-2',
+        txid: '0xbaf62c1c4de9761a421608634a4ad0f7dfbfa3546227c0f4044322bdda095f43',
+        blockTime: '2022-10-18T21:28:59.000Z',
+        category: 'receive',
+        height: BCHEIGHT,
+        satoshis: 2000,
+        address: '0xa91cFe0DcAd33F36f3c9428D48eCCBD8A71951b4',
+        chain: 'ETH',
+        network: 'mainnet',
+        effects: [{
+          type: 'ERC20:transfer',
+          to: '0xa91cFe0DcAd33F36f3c9428D48eCCBD8A71951b4',
+          from: '0xa81011Ae274eF6deBd3BDaB634102c7b6c2C452D',
+          amount: '2000',
+          contractAddress: '0x4Fabb145d64652a948d72533023f6E7A623C7C53',
+          callStack: 'log:8'
+        }]
+      }];
+      helpers.stubHistory(null, null, txs);
+
+      server.getTxHistory({}, function(err, txs) {
+        should.not.exist(err);
+        should.exist(txs);
+        txs.length.should.equal(1);
+        txs[0].amount.should.equal(3000);
+        txs[0].outputs.length.should.equal(2);
+        txs[0].effects.map(effect => effect.callStack).should.deep.equal(['log:7', 'log:8']);
+        done();
+      });
+    });
+
     it('should handle ETH/w ERC20 history  history ', function(done) {
       helpers.stubHistory(null, null);
       helpers.stubHistory(null, null, TestData.historyETH);
