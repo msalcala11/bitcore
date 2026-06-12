@@ -8,6 +8,7 @@ import { CacheStorage } from '../../../models/cache';
 import { CoinEvent } from '../../../models/events';
 import { WalletAddressStorage } from '../../../models/walletAddress';
 import { BaseEVMStateProvider, BuildWalletTxsStreamParams } from '../../../providers/chain-state/evm/api/csp';
+import { TxidDedupeTransform } from '../../../providers/chain-state/evm/api/transform';
 import { EVMBlockStorage } from '../../../providers/chain-state/evm/models/block';
 import { EVMTransactionStorage } from '../../../providers/chain-state/evm/models/transaction';
 import { EVMTransactionJSON, IEVMBlock, IEVMTransactionTransformed } from '../../../providers/chain-state/evm/types';
@@ -211,6 +212,9 @@ export class MoralisStateProvider extends BaseEVMStateProvider {
         .catch(e => logger.warn(`Failed to update ${this.chain}:${network} address lastQueryTime: %o`, e)),
       this._addAddressToSubscription({ chainId, address })
         .catch(e => logger.warn(`Failed to add address to ${this.chain}:${network} Moralis subscription: %o`, e));
+    }
+    if (args.tokenAddress) {
+      transactionStream = transactionStream.eventPipe(new TxidDedupeTransform());
     }
     return transactionStream
       .eventPipe(populateReceipt)

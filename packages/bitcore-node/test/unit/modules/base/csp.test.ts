@@ -7,10 +7,12 @@ import { MultiProviderEVMStateProvider } from '../../../../src/modules/multiProv
 import { MoralisStateProvider } from '../../../../src/modules/moralis/api/csp';
 import { CacheStorage } from '../../../../src/models/cache';
 import { BaseEVMStateProvider } from '../../../../src/providers/chain-state/evm/api/csp';
+import { TxidDedupeTransform } from '../../../../src/providers/chain-state/evm/api/transform';
 import { EVMBlockStorage } from '../../../../src/providers/chain-state/evm/models/block';
 import { EVMTransactionStorage } from '../../../../src/providers/chain-state/evm/models/transaction';
 import { Config } from '../../../../src/services/config';
 import { Storage } from '../../../../src/services/storage';
+import { TransformWithEventPipe } from '../../../../src/utils/streamWithEventPipe';
 
 
 describe('BASE Chain State Provider', function() {
@@ -513,9 +515,11 @@ describe('MultiProviderEVMStateProvider: _buildWalletTransactionsStream tokenAdd
   }
 
   function buildStreamParams(walletAddresses: string[]) {
-    const transactionStream = { eventPipe: sinon.stub().callsFake((s: any) => s) };
-    const populateReceipt = { eventPipe: sinon.stub().callsFake((s: any) => s) };
-    const populateEffects = {};
+    const transactionStream = new TransformWithEventPipe({ objectMode: true, passThrough: true });
+    const populateReceipt = new TransformWithEventPipe({ objectMode: true, passThrough: true });
+    const populateEffects = new TransformWithEventPipe({ objectMode: true, passThrough: true });
+    sinon.spy(transactionStream, 'eventPipe');
+    sinon.spy(populateReceipt, 'eventPipe');
     return {
       transactionStream,
       populateReceipt,
@@ -535,8 +539,9 @@ describe('MultiProviderEVMStateProvider: _buildWalletTransactionsStream tokenAdd
     expect(adapter.streamAddressTransactions.callCount).to.equal(0);
     expect(adapter.streamERC20Transfers.firstCall.args[0].tokenAddress).to.equal('0xtoken');
     expect(fakeStream.eventPipe.alwaysCalledWith(streamParams.transactionStream)).to.equal(true);
-    expect(streamParams.transactionStream.eventPipe.calledOnceWith(streamParams.populateReceipt)).to.equal(true);
-    expect(streamParams.populateReceipt.eventPipe.calledOnceWith(streamParams.populateEffects)).to.equal(true);
+    expect((streamParams.transactionStream.eventPipe as sinon.SinonSpy).calledOnce).to.equal(true);
+    expect((streamParams.transactionStream.eventPipe as sinon.SinonSpy).firstCall.args[0]).to.be.instanceOf(TxidDedupeTransform);
+    expect((streamParams.populateReceipt.eventPipe as sinon.SinonSpy).calledOnceWith(streamParams.populateEffects)).to.equal(true);
     expect(result).to.equal(streamParams.populateEffects);
   });
 
@@ -549,8 +554,8 @@ describe('MultiProviderEVMStateProvider: _buildWalletTransactionsStream tokenAdd
     );
     expect(adapter.streamAddressTransactions.callCount).to.equal(1);
     expect(adapter.streamERC20Transfers.callCount).to.equal(0);
-    expect(streamParams.transactionStream.eventPipe.calledOnceWith(streamParams.populateReceipt)).to.equal(true);
-    expect(streamParams.populateReceipt.eventPipe.calledOnceWith(streamParams.populateEffects)).to.equal(true);
+    expect((streamParams.transactionStream.eventPipe as sinon.SinonSpy).calledOnceWith(streamParams.populateReceipt)).to.equal(true);
+    expect((streamParams.populateReceipt.eventPipe as sinon.SinonSpy).calledOnceWith(streamParams.populateEffects)).to.equal(true);
     expect(result).to.equal(streamParams.populateEffects);
   });
 });

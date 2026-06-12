@@ -1,7 +1,7 @@
 import { MongoBound } from '../../../../models/base';
 import { Config } from '../../../../services/config';
 import { IEVMNetworkConfig } from '../../../../types/Config';
-import { jsonStringify, overlaps } from '../../../../utils';
+import { jsonStringify } from '../../../../utils';
 import { TransformWithEventPipe } from '../../../../utils/streamWithEventPipe';
 import { IEVMTransactionTransformed } from '../types';
 
@@ -47,12 +47,22 @@ export class EVMListTransactionsStream extends TransformWithEventPipe {
       baseTx.calls = transaction.calls;
       baseTx.data = transaction.data ? transaction.data.toString() : '';
     }
+
+    const matchingReceiveEffects = (transaction.effects || []).filter(effect =>
+      this.walletAddresses.includes(effect.to) && effect.contractAddress == this.tokenAddress
+    );
+    const matchingSendEffects = (transaction.effects || []).filter(effect =>
+      this.walletAddresses.includes(effect.from) && effect.contractAddress == this.tokenAddress
+    );
+
     const sending = this.walletAddresses.includes(transaction.from);
     if (sending) {
       const sendingToOurself = this.walletAddresses.includes(transaction.to);
       if (!sendingToOurself) {
         baseTx.category = 'send';
-        baseTx.satoshis = -transaction.value;
+        baseTx.satoshis = this.tokenAddress && matchingSendEffects.length
+          ? -Number(matchingSendEffects.reduce((amount, effect) => amount + BigInt(effect.amount || 0), 0n))
+          : -transaction.value;
         this.push(
           jsonStringify(baseTx) + '\n'
         );
@@ -66,13 +76,10 @@ export class EVMListTransactionsStream extends TransformWithEventPipe {
     } else {
       baseTx.category = 'receive'; // assume it's a receive, but may not be sent
       const weReceived = this.walletAddresses.includes(transaction.to);
-      const weReceivedInternal = overlaps(this.walletAddresses, transaction.effects?.map(e => e.to));
-      if (weReceivedInternal) {
+      if (matchingReceiveEffects.length) {
         baseTx.satoshis = 0n;
-        for (const effect of transaction.effects!) {
-          if (this.walletAddresses.includes(effect.to) && (effect.contractAddress == this.tokenAddress)) {
-            baseTx.satoshis += BigInt(effect.amount || 0);
-          }
+        for (const effect of matchingReceiveEffects) {
+          baseTx.satoshis += BigInt(effect.amount || 0);
         }
         this.push(
           jsonStringify(baseTx) + '\n'
@@ -85,6 +92,25 @@ export class EVMListTransactionsStream extends TransformWithEventPipe {
         );
       }
     }
+    return done();
+  }
+}
+
+export class TxidDedupeTransform extends TransformWithEventPipe {
+  private seenTxids = new Set<string>();
+
+  constructor() {
+    super({ objectMode: true });
+  }
+
+  _transform(transaction: MongoBound<IEVMTransactionTransformed>, _, done) {
+    if (transaction.txid) {
+      if (this.seenTxids.has(transaction.txid)) {
+        return done();
+      }
+      this.seenTxids.add(transaction.txid);
+    }
+    this.push(transaction);
     return done();
   }
 }

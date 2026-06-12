@@ -4,6 +4,7 @@ import logger from '../../../logger';
 import { CacheStorage } from '../../../models/cache';
 import { WalletAddressStorage } from '../../../models/walletAddress';
 import { BaseEVMStateProvider } from '../../../providers/chain-state/evm/api/csp';
+import { TxidDedupeTransform } from '../../../providers/chain-state/evm/api/transform';
 import { EVMBlockStorage } from '../../../providers/chain-state/evm/models/block';
 import { EVMTransactionStorage } from '../../../providers/chain-state/evm/models/transaction';
 import { AdapterError, AdapterErrorCode, AllProvidersUnavailableError } from '../../../providers/chain-state/external/adapters/errors';
@@ -389,6 +390,10 @@ export class MultiProviderEVMStateProvider extends BaseEVMStateProvider {
         logger.warn(`MultiProvider: ${activeProvider.adapter.name} wallet stream failed for ${address}, failing over to ${nextProvider.adapter.name}`);
         activeProvider = nextProvider;
       }
+    }
+
+    if (tokenAddress) {
+      transactionStream = transactionStream.eventPipe(new TxidDedupeTransform());
     }
 
     return transactionStream
