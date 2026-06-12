@@ -240,6 +240,49 @@ describe('P2P Service', function() {
     expect(txs.map(tx => tx.receipt.transactionHash)).to.deep.equal(['0x0', '0x1']);
   });
 
+  it('should not treat block lookup errors as unsupported block receipts', async function() {
+    const txs = [
+      { txid: '0x0', blockHash: '0xblock0', blockHeight: 1, gasPrice: 50 },
+      { txid: '0x1', blockHash: '0xblock1', blockHeight: 2, gasPrice: 50 }
+    ] as any[];
+    const request = sandbox.stub()
+      .onFirstCall().rejects({ message: 'block 0xblock0 does not exist' })
+      .onSecondCall().resolves([{
+        status: true,
+        transactionHash: '0x1',
+        transactionIndex: 0,
+        blockHash: '0xblock1',
+        blockNumber: 2,
+        cumulativeGasUsed: 1,
+        gasUsed: 10,
+        effectiveGasPrice: 20,
+        logs: []
+      }]);
+    const web3 = {
+      currentProvider: { request },
+      eth: {
+        getTransactionReceipt: sandbox.stub().callsFake(async (txid: string) => ({
+          status: true,
+          transactionHash: txid,
+          transactionIndex: 0,
+          blockHash: '0xblock0',
+          blockNumber: 1,
+          cumulativeGasUsed: 1,
+          gasUsed: 10,
+          effectiveGasPrice: 20,
+          logs: []
+        }))
+      }
+    };
+
+    await addReceiptsToTxs(web3 as any, [txs[0]], { concurrency: 1, retries: 0, retryDelayMs: 0 });
+    await addReceiptsToTxs(web3 as any, [txs[1]], { concurrency: 1, retries: 0, retryDelayMs: 0 });
+
+    expect(request.callCount).to.equal(2);
+    expect(web3.eth.getTransactionReceipt.callCount).to.equal(1);
+    expect(txs.map(tx => tx.receipt.transactionHash)).to.deep.equal(['0x0', '0x1']);
+  });
+
   it('should fall back to per-transaction EVM receipts when block receipts are incomplete', async function() {
     const txs = new Array(2).fill(undefined).map((_, idx) => ({
       txid: `0x${idx}`,

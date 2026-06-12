@@ -135,11 +135,14 @@ async function requestBlockReceipts(provider: any, blockId: string) {
 function isUnsupportedBlockReceiptsError(err: any) {
   const code = err?.code ?? err?.error?.code;
   const message = String(err?.message || err?.error?.message || err || '').toLowerCase();
+  const mentionsMethod = message.includes('method');
   return code === -32601 ||
     message.includes('method not found') ||
     message.includes('method not supported') ||
-    message.includes('does not exist') ||
-    message.includes('not available');
+    (mentionsMethod && (
+      message.includes('does not exist') ||
+      message.includes('not available')
+    ));
 }
 
 async function getReceiptWithRetry(
