@@ -1043,6 +1043,38 @@ describe('History', function() {
       });
     });
 
+    it('should recreate abiType for rounded receipt-log ERC20 send amounts', function(done) {
+      const amount = '1123456789123456789';
+      const txs = [{
+        id: 'receipt-log-erc20-rounded-send',
+        txid: '0xbaf62c1c4de9761a421608634a4ad0f7dfbfa3546227c0f4044322bdda095f43',
+        blockTime: '2022-10-18T21:28:59.000Z',
+        category: 'send',
+        height: BCHEIGHT,
+        satoshis: -Number(amount),
+        address: '0xa91cFe0DcAd33F36f3c9428D48eCCBD8A71951b4',
+        chain: 'ETH',
+        network: 'mainnet',
+        effects: [{
+          type: 'ERC20:transfer',
+          to: '0xa91cFe0DcAd33F36f3c9428D48eCCBD8A71951b4',
+          from: '0xa81011Ae274eF6deBd3BDaB634102c7b6c2C452D',
+          amount,
+          contractAddress: '0x4Fabb145d64652a948d72533023f6E7A623C7C53',
+          callStack: 'log:7'
+        }]
+      }];
+      helpers.stubHistory(null, null, txs);
+
+      server.getTxHistory({}, function(err, txs) {
+        should.not.exist(err);
+        should.exist(txs);
+        txs.length.should.equal(1);
+        txs[0].abiType.should.deep.equal({ name: 'transfer' });
+        done();
+      });
+    });
+
     it('should not recreate abiType for native rows with incidental ERC20 effects', function(done) {
       const txs = [{
         id: 'native-router-send',

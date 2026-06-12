@@ -10,7 +10,7 @@ import { Gnosis } from '../../../src/providers/chain-state/evm/api/gnosis';
 import { Erc20RelatedFilterTransform } from '../../../src/providers/chain-state/evm/api/erc20Transform';
 import { MultisigRelatedFilterTransform } from '../../../src/providers/chain-state/evm/api/multisigTransform';
 import { Config } from '../../../src/services/config';
-import { EVMListTransactionsStream } from '../../../src/providers/chain-state/evm/api/transform';
+import { EVMListTransactionsStream, TxidDedupeTransform } from '../../../src/providers/chain-state/evm/api/transform';
 import { EVMTransactionStorage } from '../../../src/providers/chain-state/evm/models/transaction';
 import { WalletAddressStorage } from '../../../src/models/walletAddress';
 import { BitcoinTransaction, TransactionInput } from '../../../src/types/namespaces/Bitcoin';
@@ -607,6 +607,62 @@ describe('Transaction Model', function() {
         expect(rows.map(row => row.category)).to.deep.equal(['receive', 'receive']);
         expect(rows.map(row => row.satoshis)).to.deep.equal(['100', '200']);
         expect(rows.map(row => row.callStack)).to.deep.equal(['log:7', 'log:8']);
+      });
+
+      it('should use the root value for native receives that also contain token effects', async () => {
+        const busdToken = Web3.utils.toChecksumAddress('0x4fabb145d64652a948d72533023f6e7a623c7c53');
+        const walletAddress = Web3.utils.toChecksumAddress('0xa91cfe0dcad33f36f3c9428d48eccbd8a71951b4');
+        const senderAddress = Web3.utils.toChecksumAddress('0x8489935991b0eac9ce9e9330d35b9734ecdf2cad');
+        const rows = await collectEvmListTransactionRows([walletAddress], undefined, [{
+          _id: new ObjectId(),
+          txid: '0xnative-and-token-receive',
+          chain: 'ETH',
+          network: 'mainnet',
+          blockHeight: 15950646,
+          blockTimeNormalized: new Date('2022-11-12T01:26:59.000Z'),
+          from: senderAddress,
+          to: walletAddress,
+          value: 500,
+          fee: 622112000000000,
+          gasPrice: 16000000000,
+          gasLimit: 160000,
+          nonce: 5,
+          transactionIndex: 0,
+          data: Buffer.from(''),
+          internal: [],
+          calls: [],
+          receipt: { status: true },
+          effects: [{
+            to: walletAddress,
+            from: senderAddress,
+            amount: '100',
+            type: 'ERC20:transfer',
+            contractAddress: busdToken,
+            callStack: 'log:7'
+          }]
+        }]);
+
+        expect(rows).to.have.length(1);
+        expect(rows[0].category).to.equal('receive');
+        expect(rows[0].satoshis).to.equal('500');
+      });
+
+      it('should dedupe external token rows by txid before receipt enrichment', async () => {
+        const rows = new Array<any>();
+        const stream = new TxidDedupeTransform();
+        const done = new Promise<void>((resolve, reject) => {
+          stream
+            .on('data', tx => rows.push(tx))
+            .on('error', reject)
+            .on('end', resolve);
+        });
+        stream.write({ txid: '0xbatch', value: '100' });
+        stream.write({ txid: '0xbatch', value: '200' });
+        stream.write({ txid: '0xsingle', value: '300' });
+        stream.end();
+        await done;
+
+        expect(rows.map(row => row.value)).to.deep.equal(['100', '300']);
       });
 
       it('should not emit Gnosis token history rows for failed ERC20 sends', async () => {

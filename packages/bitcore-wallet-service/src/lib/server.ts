@@ -3956,10 +3956,17 @@ export class WalletService implements IWalletService {
         // If we remove the slight reliance in the wallet on abiType then we can remove this adapter
         function satoshisMatchesEffect(tx, effect) {
           try {
-            return BigInt(tx.satoshis) === BigInt(effect.amount) || BigInt(tx.satoshis) === -BigInt(effect.amount);
+            if (BigInt(tx.satoshis) === BigInt(effect.amount) || BigInt(tx.satoshis) === -BigInt(effect.amount)) {
+              return true;
+            }
           } catch {
-            return false;
+            // Fall through to rounded-number comparison for JS number values.
           }
+          const txSatoshis = Number(tx.satoshis);
+          const effectAmount = Number(effect.amount);
+          return Number.isFinite(txSatoshis) &&
+            Number.isFinite(effectAmount) &&
+            (txSatoshis === effectAmount || txSatoshis === -effectAmount);
         }
 
         function recreateAbiType(tx) {
