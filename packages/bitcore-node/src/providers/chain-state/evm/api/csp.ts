@@ -445,7 +445,15 @@ export class BaseEVMStateProvider extends InternalStateProvider implements IChai
     const shouldRefetchForLogEffects = this.shouldRefetchReceiptForLogEffects(tx);
     let receiptFetched = false;
     if (!tx.receipt || shouldRefetchForLogEffects) {
-      const receipt = await this.getReceipt(tx.network, tx.txid);
+      let receipt;
+      try {
+        receipt = await this.getReceipt(tx.network, tx.txid);
+      } catch (err) {
+        if (!tx.receipt) {
+          throw err;
+        }
+        logger.warn('Unable to refetch receipt logs for tx %s; returning stored receipt: %o', tx.txid, err);
+      }
       if (receipt) {
         tx.receipt = receipt as any;
         update.receipt = tx.receipt;

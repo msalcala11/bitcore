@@ -3824,6 +3824,11 @@ export class WalletService implements IWalletService {
     const seenReceive = {};
 
     const moves: { [txid: string]: ITxProposal } = {};
+    const mergeEffects = (target, source) => {
+      if (source.effects?.length) {
+        target.effects = (target.effects || []).concat(source.effects);
+      }
+    };
     // remove 'fees' and 'moves' (probably change addresses)
     txs = txs.filter(tx => {
       // double spend or error
@@ -3840,6 +3845,7 @@ export class WalletService implements IWalletService {
         };
         if (seenReceive[tx.txid]) {
           seenReceive[tx.txid].outputs.push(output);
+          mergeEffects(seenReceive[tx.txid], tx);
           return false;
         } else {
           tx.outputs = [output];
@@ -3854,6 +3860,7 @@ export class WalletService implements IWalletService {
         };
         if (seenSend[tx.txid]) {
           seenSend[tx.txid].outputs.push(output);
+          mergeEffects(seenSend[tx.txid], tx);
           return false;
         } else {
           tx.outputs = [output];
