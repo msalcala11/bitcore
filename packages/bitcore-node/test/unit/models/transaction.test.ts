@@ -9,6 +9,7 @@ import { ChainStateProvider } from '../../../src/providers/chain-state';
 import { Gnosis } from '../../../src/providers/chain-state/evm/api/gnosis';
 import { Config } from '../../../src/services/config';
 import { EVMListTransactionsStream } from '../../../src/providers/chain-state/evm/api/transform';
+import { Erc20RelatedFilterTransform } from '../../../src/providers/chain-state/evm/api/erc20Transform';
 import { EVMTransactionStorage } from '../../../src/providers/chain-state/evm/models/transaction';
 import { WalletAddressStorage } from '../../../src/models/walletAddress';
 import { BitcoinTransaction, TransactionInput } from '../../../src/types/namespaces/Bitcoin';
@@ -33,6 +34,23 @@ describe('Transaction Model', function() {
       stream.write(tx);
     }
     stream.end();
+    await done;
+    return rows;
+  };
+  const collectErc20TokenHistoryRows = async (walletAddresses: Array<string>, tokenAddress: string, txs: Array<any>) => {
+    const rows = new Array<any>();
+    const erc20Transform = new Erc20RelatedFilterTransform(tokenAddress);
+    const stream = erc20Transform.pipe(new EVMListTransactionsStream(walletAddresses, tokenAddress));
+    const done = new Promise<void>((resolve, reject) => {
+      stream
+        .on('data', chunk => rows.push(JSON.parse(chunk.toString())))
+        .on('error', reject)
+        .on('end', resolve);
+    });
+    for (const tx of txs) {
+      erc20Transform.write(tx);
+    }
+    erc20Transform.end();
     await done;
     return rows;
   };
@@ -421,6 +439,52 @@ describe('Transaction Model', function() {
         }]);
 
         expect(rows).to.deep.equal([]);
+      });
+
+      it('should not overcount batched ERC20 receives in token history', async () => {
+        const busdToken = Web3.utils.toChecksumAddress('0x4fabb145d64652a948d72533023f6e7a623c7c53');
+        const walletAddress = Web3.utils.toChecksumAddress('0xa91cfe0dcad33f36f3c9428d48eccbd8a71951b4');
+        const firstCounterpartyAddress = Web3.utils.toChecksumAddress('0x8489935991b0eac9ce9e9330d35b9734ecdf2cad');
+        const secondCounterpartyAddress = Web3.utils.toChecksumAddress('0xa81011ae274ef6debd3bdab634102c7b6c2c452d');
+        const rows = await collectErc20TokenHistoryRows([walletAddress], busdToken, [{
+          _id: new ObjectId(),
+          txid: '0xbatch',
+          chain: 'ETH',
+          network: 'mainnet',
+          blockHeight: 15950646,
+          blockTimeNormalized: new Date('2022-11-12T01:26:59.000Z'),
+          from: firstCounterpartyAddress,
+          to: busdToken,
+          value: 0,
+          fee: 622112000000000,
+          gasPrice: 16000000000,
+          gasLimit: 160000,
+          nonce: 5,
+          transactionIndex: 0,
+          data: Buffer.from(''),
+          internal: [],
+          calls: [],
+          receipt: { status: true },
+          effects: [{
+            to: walletAddress,
+            from: firstCounterpartyAddress,
+            amount: '100',
+            type: 'ERC20:transfer',
+            contractAddress: busdToken,
+            callStack: 'log:7'
+          }, {
+            to: walletAddress,
+            from: secondCounterpartyAddress,
+            amount: '200',
+            type: 'ERC20:transfer',
+            contractAddress: busdToken,
+            callStack: 'log:8'
+          }]
+        }]);
+
+        expect(rows.map(row => row.category)).to.deep.equal(['receive', 'receive']);
+        expect(rows.map(row => row.satoshis)).to.deep.equal(['100', '200']);
+        expect(rows.map(row => row.callStack)).to.deep.equal(['log:7', 'log:8']);
       });
 
       it('should not emit Gnosis token history rows for failed ERC20 sends', async () => {

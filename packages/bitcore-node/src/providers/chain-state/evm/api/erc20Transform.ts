@@ -22,6 +22,7 @@ export class Erc20RelatedFilterTransform extends TransformWithEventPipe {
         _tx.value = Number(internalTx.amount);
         _tx.to = internalTx.to;
         _tx.from = internalTx.from;
+        _tx.effects = [internalTx];
         if (internalTx.from != tx.from) {
           _tx.initialFrom = tx.from;
         }
