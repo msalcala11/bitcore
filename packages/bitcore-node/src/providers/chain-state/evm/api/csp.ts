@@ -459,7 +459,12 @@ export class BaseEVMStateProvider extends InternalStateProvider implements IChai
       }
     }
 
-    if (tx.receipt && (!shouldRefetchForLogEffects || receiptFetched)) {
+    // Only (re)derive effects when we just fetched a receipt with logs, or this tx has never
+    // been processed. Re-deriving an already-processed tx is wasteful on every read and can
+    // regress stored effects: the stored receipt has its logs stripped, so getEffects() can no
+    // longer reconcile against them and would re-add trace-derived ERC20 effects that the logs
+    // previously dropped.
+    if (tx.receipt && (receiptFetched || (!shouldRefetchForLogEffects && !tx.receiptLogEffectsProcessed))) {
       const previousEffectCount = tx.effects?.length || 0;
       const previousEffects = tx.effects ? JSON.stringify(tx.effects) : undefined;
       const wasReceiptLogEffectsProcessed = !!tx.receiptLogEffectsProcessed;
