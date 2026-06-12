@@ -673,9 +673,7 @@ export class BaseEVMStateProvider extends InternalStateProvider implements IChai
         confirmations = tipHeight - t.blockHeight + 1;
       }
       // Add effects to old db entries
-      if (!t.effects || (t.effects && t.effects.length == 0)) {
-        t.effects = EVMTransactionStorage.getEffects(t as IEVMTransactionInProcess);
-      }
+      this.populateEffects(t);
       const convertedTx = EVMTransactionStorage._apiTransform(t, { object: true }) as Partial<ITransaction>;
       return JSON.stringify({ ...convertedTx, confirmations });
     });

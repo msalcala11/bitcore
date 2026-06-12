@@ -10,6 +10,7 @@ import { BaseEVMStateProvider } from '../../../../src/providers/chain-state/evm/
 import { EVMBlockStorage } from '../../../../src/providers/chain-state/evm/models/block';
 import { EVMTransactionStorage } from '../../../../src/providers/chain-state/evm/models/transaction';
 import { Config } from '../../../../src/services/config';
+import { Storage } from '../../../../src/services/storage';
 
 
 describe('BASE Chain State Provider', function() {
@@ -768,6 +769,73 @@ describe('BaseEVMStateProvider: populateReceipt', function() {
     expect(getReceipt.callCount).to.equal(0);
     expect(tx.effects).to.deep.equal([]);
     expect(updateOne.called).to.equal(false);
+  });
+
+  it('does not recompute processed empty effects when streaming block transactions', async function() {
+    const provider = new BaseEVMStateProvider('ETH');
+    sandbox.stub(provider, 'getLocalTip').resolves({ height: 15777684 } as any);
+    const getEffects = sandbox.spy(EVMTransactionStorage, 'getEffects');
+    const tx = {
+      _id: new ObjectId(),
+      txid,
+      chain: 'ETH',
+      network: 'mainnet',
+      blockHeight: 15777684,
+      blockHash: '0x0ce917ca8e25cccd7228a92895cc11c54fd61479dcec63c3234f16957e1970d9',
+      blockTime: new Date('2022-10-18T21:28:59.000Z'),
+      blockTimeNormalized: new Date('2022-10-18T21:28:59.000Z'),
+      from: '0x963737C550E70FFe4D59464542a28604eDb2eF9a',
+      to: sourceAddress,
+      value: 0,
+      gasPrice: 20,
+      gasLimit: 1500000,
+      nonce: 79903,
+      transactionIndex: 0,
+      receipt: {
+        status: true,
+        transactionHash: txid,
+        transactionIndex: 0,
+        blockHash: '0x0ce917ca8e25cccd7228a92895cc11c54fd61479dcec63c3234f16957e1970d9',
+        blockNumber: 15777684,
+        cumulativeGasUsed: 0,
+        gasUsed: 100
+      },
+      calls: [{
+        from: sourceAddress,
+        to: busdToken,
+        value: '0',
+        depth: '0',
+        type: 'CALL',
+        abiType: {
+          type: 'ERC20',
+          name: 'transfer',
+          params: [
+            { name: '_to', type: 'address', value: walletAddress },
+            { name: '_value', type: 'uint256', value: amount }
+          ]
+        }
+      }],
+      effects: [],
+      receiptLogEffectsProcessed: true
+    } as any;
+    let streamedTx = '';
+    sandbox.stub(Storage, 'apiStreamingFind').callsFake((...args: any[]) => {
+      streamedTx = args[5](tx);
+      return 'streamed' as any;
+    });
+
+    const result = await provider.streamTransactions({
+      chain: 'ETH',
+      network: 'mainnet',
+      req: {},
+      res: {},
+      args: { blockHeight: 15777684 }
+    } as any);
+
+    expect(result).to.equal('streamed');
+    expect(getEffects.callCount).to.equal(0);
+    expect(tx.effects).to.deep.equal([]);
+    expect(JSON.parse(streamedTx).effects).to.deep.equal([]);
   });
 
   it('clears existing effects when the stored receipt failed', async function() {
