@@ -74,6 +74,7 @@ async function getBlockReceipts(
   }
 
   if (!Array.isArray(receipts)) {
+    blockReceiptsUnsupportedProviders.add(provider);
     return;
   }
 
