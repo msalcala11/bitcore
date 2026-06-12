@@ -25,6 +25,7 @@ import { ERC20Abi } from '../abi/erc20';
 import { MultisendAbi } from '../abi/multisend';
 import { EVMBlockStorage } from '../models/block';
 import { EVMTransactionStorage } from '../models/transaction';
+import { normalizeReceipt } from '../p2p/receipts';
 import { EVMTransactionJSON, IEVMBlock, IEVMTransaction, IEVMTransactionInProcess } from '../types';
 import { AaveAccountData, AaveReserveData, AaveReserveTokensAddresses, AaveV2AccountData, AaveV3AccountData, AaveVersion, getAavePoolAddress } from './aave';
 import { Erc20RelatedFilterTransform } from './erc20Transform';
@@ -436,7 +437,7 @@ export class BaseEVMStateProvider extends InternalStateProvider implements IChai
   async getReceipt(network: string, txid: string) {
     const { web3 } = await this.getWeb3(network, { type: 'historical' });
     const receipt = await web3.eth.getTransactionReceipt(txid);
-    return Utils.BI.scrubBigIntsInObject(receipt);
+    return normalizeReceipt(receipt);
   }
 
   async populateReceipt(tx: MongoBound<IEVMTransaction>) {
@@ -515,7 +516,7 @@ export class BaseEVMStateProvider extends InternalStateProvider implements IChai
 
   shouldRefetchReceiptForLogEffects(tx: MongoBound<IEVMTransaction>) {
     return !!tx.receipt &&
-      !tx.receipt.logs?.length &&
+      tx.receipt.logs === undefined &&
       !tx.receiptLogEffectsProcessed &&
       !EVMTransactionStorage.isFailedReceipt(tx.receipt);
   }

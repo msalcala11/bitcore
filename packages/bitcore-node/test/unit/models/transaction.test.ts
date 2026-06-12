@@ -597,6 +597,105 @@ describe('Transaction Model', function() {
         expect(rows.map(row => row.value)).to.deep.equal(['100', '200']);
       });
 
+      it('should not include wallet-to-wallet token moves in send or receive totals', async () => {
+        const walletAddress = Web3.utils.toChecksumAddress('0xa91cfe0dcad33f36f3c9428d48eccbd8a71951b4');
+        const changeAddress = Web3.utils.toChecksumAddress('0x8489935991b0eac9ce9e9330d35b9734ecdf2cad');
+        const counterpartyAddress = Web3.utils.toChecksumAddress('0xa81011ae274ef6debd3bdab634102c7b6c2c452d');
+        const receiveEffect = {
+          to: walletAddress,
+          from: counterpartyAddress,
+          amount: '5',
+          type: 'ERC20:transfer',
+          contractAddress: busdToken,
+          callStack: 'log:7'
+        };
+        const moveEffect = {
+          to: changeAddress,
+          from: walletAddress,
+          amount: '100',
+          type: 'ERC20:transfer',
+          contractAddress: busdToken,
+          callStack: 'log:8'
+        };
+        const sendEffect = {
+          to: counterpartyAddress,
+          from: walletAddress,
+          amount: '7',
+          type: 'ERC20:transfer',
+          contractAddress: busdToken,
+          callStack: 'log:9'
+        };
+        const effects = [receiveEffect, moveEffect, sendEffect];
+        const rows = await collectEvmListTransactionRows(
+          [walletAddress.toLowerCase(), changeAddress.toLowerCase()],
+          busdToken.toLowerCase(),
+          [{
+            _id: new ObjectId(),
+            txid: '0xmixed-receive-move-send',
+            chain: 'ETH',
+            network: 'mainnet',
+            blockHeight: 15950646,
+            blockTimeNormalized: new Date('2022-11-12T01:26:59.000Z'),
+            from: counterpartyAddress,
+            to: walletAddress,
+            value: 5,
+            fee: 622112000000000,
+            gasPrice: 16000000000,
+            gasLimit: 160000,
+            nonce: 5,
+            transactionIndex: 0,
+            data: Buffer.from(''),
+            internal: [],
+            calls: [],
+            receipt: { status: true },
+            effects
+          }, {
+            _id: new ObjectId(),
+            txid: '0xmixed-receive-move-send',
+            chain: 'ETH',
+            network: 'mainnet',
+            blockHeight: 15950646,
+            blockTimeNormalized: new Date('2022-11-12T01:26:59.000Z'),
+            from: walletAddress,
+            to: changeAddress,
+            value: 100,
+            fee: 622112000000000,
+            gasPrice: 16000000000,
+            gasLimit: 160000,
+            nonce: 5,
+            transactionIndex: 0,
+            data: Buffer.from(''),
+            internal: [],
+            calls: [],
+            receipt: { status: true },
+            effects
+          }, {
+            _id: new ObjectId(),
+            txid: '0xmixed-receive-move-send',
+            chain: 'ETH',
+            network: 'mainnet',
+            blockHeight: 15950646,
+            blockTimeNormalized: new Date('2022-11-12T01:26:59.000Z'),
+            from: walletAddress,
+            to: counterpartyAddress,
+            value: 7,
+            fee: 622112000000000,
+            gasPrice: 16000000000,
+            gasLimit: 160000,
+            nonce: 5,
+            transactionIndex: 0,
+            data: Buffer.from(''),
+            internal: [],
+            calls: [],
+            receipt: { status: true },
+            effects
+          }]
+        );
+
+        expect(rows.map(row => row.category)).to.deep.equal(['receive', 'move', 'send']);
+        expect(rows.map(row => row.satoshis)).to.deep.equal(['5', 100, '-7']);
+      });
+
       it('should not overcount batched native internal receives', async () => {
         const walletAddress = Web3.utils.toChecksumAddress('0xa91cfe0dcad33f36f3c9428d48eccbd8a71951b4');
         const contractAddress = Web3.utils.toChecksumAddress('0x963737c550e70ffe4d59464542a28604edb2ef9a');
@@ -784,6 +883,47 @@ describe('Transaction Model', function() {
 
         expect(effects).to.deep.equal([]);
         expect((tx as any).receiptLogEffectsProcessed).to.equal(true);
+      });
+
+      it('should not mark successful stripped receipts as receipt-log processed', async () => {
+        const tx = missingReceiveTx({
+          calls: [{
+            from: missingReceiveSender,
+            to: busdToken,
+            value: '0',
+            depth: '0',
+            type: 'CALL',
+            abiType: {
+              type: 'ERC20',
+              name: 'transfer',
+              params: [
+                { name: '_to', type: 'address', value: missingReceiveWallet },
+                { name: '_value', type: 'uint256', value: missingReceiveAmount }
+              ]
+            }
+          }],
+          receipt: {
+            status: true,
+            transactionHash: '0xbaf62c1c4de9761a421608634a4ad0f7dfbfa3546227c0f4044322bdda095f43',
+            transactionIndex: 0,
+            blockHash: '0x0ce917ca8e25cccd7228a92895cc11c54fd61479dcec63c3234f16957e1970d9',
+            blockNumber: 15777684,
+            cumulativeGasUsed: 0,
+            gasUsed: 0
+          }
+        });
+
+        const effects = EVMTransactionStorage.getEffects(tx as any);
+
+        expect(effects).to.deep.equal([{
+          to: missingReceiveWallet,
+          from: missingReceiveSender,
+          amount: missingReceiveAmount,
+          type: 'ERC20:transfer',
+          contractAddress: busdToken,
+          callStack: '0'
+        }]);
+        expect((tx as any).receiptLogEffectsProcessed).to.equal(undefined);
       });
 
       it('should replace traced ERC20 effects with receipt-log effects', async () => {

@@ -11,9 +11,15 @@ const isFailedReceipt = (receipt?: { status?: boolean | number | string | bigint
 };
 
 export class EVMListTransactionsStream extends TransformWithEventPipe {
-  constructor(private walletAddresses: Array<string>, private tokenAddress?: string) {
+  private walletAddressSet: Set<string>;
+  private tokenAddressLower?: string;
+
+  constructor(walletAddresses: Array<string>, private tokenAddress?: string) {
     super({ objectMode: true });
+    this.walletAddressSet = new Set(walletAddresses.map(address => address.toLowerCase()));
+    this.tokenAddressLower = tokenAddress?.toLowerCase();
   }
+
   async _transform(transaction: MongoBound<IEVMTransactionTransformed>, _, done) {
     if (this.tokenAddress && isFailedReceipt(transaction.receipt)) {
       return done();
@@ -49,15 +55,19 @@ export class EVMListTransactionsStream extends TransformWithEventPipe {
     }
 
     const matchingReceiveEffects = (transaction.effects || []).filter(effect =>
-      this.walletAddresses.includes(effect.to) && effect.contractAddress == this.tokenAddress
+      this.isWalletAddress(effect.to) &&
+      this.matchesTokenAddress(effect.contractAddress) &&
+      !this.isWalletMoveEffect(effect)
     );
     const matchingSendEffects = (transaction.effects || []).filter(effect =>
-      this.walletAddresses.includes(effect.from) && effect.contractAddress == this.tokenAddress
+      this.isWalletAddress(effect.from) &&
+      this.matchesTokenAddress(effect.contractAddress) &&
+      !this.isWalletMoveEffect(effect)
     );
 
-    const sending = this.walletAddresses.includes(transaction.from);
+    const sending = this.isWalletAddress(transaction.from);
     if (sending) {
-      const sendingToOurself = this.walletAddresses.includes(transaction.to);
+      const sendingToOurself = this.isWalletAddress(transaction.to);
       if (!sendingToOurself) {
         baseTx.category = 'send';
         baseTx.satoshis = this.tokenAddress && matchingSendEffects.length
@@ -75,7 +85,7 @@ export class EVMListTransactionsStream extends TransformWithEventPipe {
       }
     } else {
       baseTx.category = 'receive'; // assume it's a receive, but may not be sent
-      const weReceived = this.walletAddresses.includes(transaction.to);
+      const weReceived = this.isWalletAddress(transaction.to);
       if (matchingReceiveEffects.length) {
         baseTx.satoshis = 0n;
         for (const effect of matchingReceiveEffects) {
@@ -93,6 +103,21 @@ export class EVMListTransactionsStream extends TransformWithEventPipe {
       }
     }
     return done();
+  }
+
+  private isWalletMoveEffect(effect: { from?: string; to?: string }) {
+    return this.isWalletAddress(effect.from) && this.isWalletAddress(effect.to);
+  }
+
+  private isWalletAddress(address?: string) {
+    return !!address && this.walletAddressSet.has(address.toLowerCase());
+  }
+
+  private matchesTokenAddress(contractAddress?: string) {
+    if (!this.tokenAddressLower) {
+      return !contractAddress;
+    }
+    return contractAddress?.toLowerCase() === this.tokenAddressLower;
   }
 }
 
