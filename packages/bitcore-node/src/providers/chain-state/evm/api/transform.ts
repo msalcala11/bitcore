@@ -97,20 +97,54 @@ export class EVMListTransactionsStream extends TransformWithEventPipe {
 }
 
 export class TxidDedupeTransform extends TransformWithEventPipe {
-  private seenTxids = new Set<string>();
+  private seenKeys = new Set<string>();
+  private keyOrder = new Array<string>();
+  private walletAddressSet: Set<string>;
 
-  constructor() {
+  constructor(walletAddresses: Array<string> = [], private maxSeenKeys = 10_000) {
     super({ objectMode: true });
+    this.walletAddressSet = new Set(walletAddresses.map(address => address.toLowerCase()));
   }
 
   _transform(transaction: MongoBound<IEVMTransactionTransformed>, _, done) {
     if (transaction.txid) {
-      if (this.seenTxids.has(transaction.txid)) {
+      const key = `${transaction.txid}:${this.getDirection(transaction)}`;
+      if (this.seenKeys.has(key)) {
         return done();
       }
-      this.seenTxids.add(transaction.txid);
+      this.rememberKey(key);
     }
     this.push(transaction);
     return done();
+  }
+
+  private rememberKey(key: string) {
+    this.seenKeys.add(key);
+    this.keyOrder.push(key);
+    if (this.keyOrder.length > this.maxSeenKeys) {
+      const oldestKey = this.keyOrder.shift();
+      if (oldestKey) {
+        this.seenKeys.delete(oldestKey);
+      }
+    }
+  }
+
+  private getDirection(transaction: MongoBound<IEVMTransactionTransformed>) {
+    const fromWallet = this.isWalletAddress(transaction.from);
+    const toWallet = this.isWalletAddress(transaction.to);
+    if (fromWallet && toWallet) {
+      return 'move';
+    }
+    if (fromWallet) {
+      return 'send';
+    }
+    if (toWallet) {
+      return 'receive';
+    }
+    return 'other';
+  }
+
+  private isWalletAddress(address?: string) {
+    return !!address && this.walletAddressSet.has(address.toLowerCase());
   }
 }

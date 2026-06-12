@@ -10,6 +10,7 @@ import { Gnosis } from '../../../src/providers/chain-state/evm/api/gnosis';
 import { Config } from '../../../src/services/config';
 import { EVMListTransactionsStream, TxidDedupeTransform } from '../../../src/providers/chain-state/evm/api/transform';
 import { Erc20RelatedFilterTransform } from '../../../src/providers/chain-state/evm/api/erc20Transform';
+import { InternalTxRelatedFilterTransform } from '../../../src/providers/chain-state/evm/api/internalTxTransform';
 import { EVMTransactionStorage } from '../../../src/providers/chain-state/evm/models/transaction';
 import { WalletAddressStorage } from '../../../src/models/walletAddress';
 import { BitcoinTransaction, TransactionInput } from '../../../src/types/namespaces/Bitcoin';
@@ -51,6 +52,30 @@ describe('Transaction Model', function() {
       erc20Transform.write(tx);
     }
     erc20Transform.end();
+    await done;
+    return rows;
+  };
+  const collectInternalNativeHistoryRows = async (walletAddresses: Array<string>, txs: Array<any>) => {
+    const rows = new Array<any>();
+    const cursor = {
+      toArray: sandbox.stub().resolves(walletAddresses.map(address => ({ address }))),
+      close: sandbox.stub().resolves()
+    };
+    sandbox.stub(WalletAddressStorage, 'collection').get(() => ({
+      find: sandbox.stub().returns(cursor)
+    }));
+    const internalTransform = new InternalTxRelatedFilterTransform(Web3 as any, new ObjectId());
+    const stream = internalTransform.pipe(new EVMListTransactionsStream(walletAddresses, undefined));
+    const done = new Promise<void>((resolve, reject) => {
+      stream
+        .on('data', chunk => rows.push(JSON.parse(chunk.toString())))
+        .on('error', reject)
+        .on('end', resolve);
+    });
+    for (const tx of txs) {
+      internalTransform.write(tx);
+    }
+    internalTransform.end();
     await done;
     return rows;
   };
@@ -526,21 +551,65 @@ describe('Transaction Model', function() {
       });
 
       it('should dedupe external token rows by txid before receipt enrichment', async () => {
+        const walletAddress = Web3.utils.toChecksumAddress('0xa91cfe0dcad33f36f3c9428d48eccbd8a71951b4');
+        const counterpartyAddress = Web3.utils.toChecksumAddress('0x8489935991b0eac9ce9e9330d35b9734ecdf2cad');
         const rows = new Array<any>();
-        const stream = new TxidDedupeTransform();
+        const stream = new TxidDedupeTransform([walletAddress]);
         const done = new Promise<void>((resolve, reject) => {
           stream
             .on('data', tx => rows.push(tx))
             .on('error', reject)
             .on('end', resolve);
         });
-        stream.write({ txid: '0xbatch', value: '100' });
-        stream.write({ txid: '0xbatch', value: '200' });
-        stream.write({ txid: '0xsingle', value: '300' });
+        stream.write({ txid: '0xbatch', from: walletAddress, to: counterpartyAddress, value: '100' });
+        stream.write({ txid: '0xbatch', from: walletAddress, to: counterpartyAddress, value: '200' });
+        stream.write({ txid: '0xbatch', from: counterpartyAddress, to: walletAddress, value: '5' });
         stream.end();
         await done;
 
-        expect(rows.map(row => row.value)).to.deep.equal(['100', '300']);
+        expect(rows.map(row => row.value)).to.deep.equal(['100', '5']);
+      });
+
+      it('should not overcount batched native internal receives', async () => {
+        const walletAddress = Web3.utils.toChecksumAddress('0xa91cfe0dcad33f36f3c9428d48eccbd8a71951b4');
+        const contractAddress = Web3.utils.toChecksumAddress('0x963737c550e70ffe4d59464542a28604edb2ef9a');
+        const firstCounterpartyAddress = Web3.utils.toChecksumAddress('0x8489935991b0eac9ce9e9330d35b9734ecdf2cad');
+        const secondCounterpartyAddress = Web3.utils.toChecksumAddress('0xa81011ae274ef6debd3bdab634102c7b6c2c452d');
+        const rows = await collectInternalNativeHistoryRows([walletAddress], [{
+          _id: new ObjectId(),
+          txid: '0xinternal-batch',
+          chain: 'ETH',
+          network: 'mainnet',
+          blockHeight: 15950646,
+          blockTimeNormalized: new Date('2022-11-12T01:26:59.000Z'),
+          from: contractAddress,
+          to: contractAddress,
+          value: 0,
+          fee: 622112000000000,
+          gasPrice: 16000000000,
+          gasLimit: 160000,
+          nonce: 5,
+          transactionIndex: 0,
+          data: Buffer.from(''),
+          internal: [],
+          calls: [],
+          receipt: { status: true },
+          effects: [{
+            to: walletAddress,
+            from: firstCounterpartyAddress,
+            amount: '100',
+            callStack: '1'
+          }, {
+            to: walletAddress,
+            from: secondCounterpartyAddress,
+            amount: '200',
+            callStack: '2'
+          }]
+        }]);
+
+        expect(rows.map(row => row.category)).to.deep.equal(['receive', 'receive']);
+        expect(rows.map(row => row.satoshis)).to.deep.equal(['100', '200']);
+        expect(rows.map(row => row.callStack)).to.deep.equal(['1', '2']);
       });
 
       it('should not emit Gnosis token history rows for failed ERC20 sends', async () => {

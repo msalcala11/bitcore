@@ -214,7 +214,7 @@ export class MoralisStateProvider extends BaseEVMStateProvider {
         .catch(e => logger.warn(`Failed to add address to ${this.chain}:${network} Moralis subscription: %o`, e));
     }
     if (args.tokenAddress) {
-      transactionStream = transactionStream.eventPipe(new TxidDedupeTransform());
+      transactionStream = transactionStream.eventPipe(new TxidDedupeTransform(walletAddresses));
     }
     return transactionStream
       .eventPipe(populateReceipt)
