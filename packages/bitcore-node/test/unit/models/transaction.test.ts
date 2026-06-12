@@ -996,6 +996,20 @@ describe('Transaction Model', function() {
         expect(effects).to.deep.equal([expectedMissingReceiveEffect()]);
       });
 
+      it('should ignore zero-amount ERC20 transfer logs', async () => {
+        const tx = missingReceiveTx({
+          receipt: {
+            ...missingReceiveTx().receipt,
+            logs: [receiptTransferLog({ amount: '0' })]
+          }
+        });
+
+        const effects = EVMTransactionStorage.getEffects(tx as any);
+
+        expect(effects).to.deep.equal([]);
+        expect((tx as any).receiptLogEffectsProcessed).to.equal(true);
+      });
+
       it('should not get trace effects from failed EVM transactions', async () => {
         const tx = missingReceiveTx({
           calls: [{

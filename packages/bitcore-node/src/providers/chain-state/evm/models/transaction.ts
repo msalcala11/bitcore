@@ -504,12 +504,16 @@ export class EVMTransactionModel extends BaseTransaction<IEVMTransaction> {
     if (!from || !to || !/^0x[0-9a-fA-F]{40}$/.test(contractAddress)) {
       return;
     }
+    const amount = BigInt(data);
+    if (amount === 0n) {
+      return;
+    }
     const logIndex = log.logIndex ?? index;
     return {
       type: 'ERC20:transfer',
       to: Web3.utils.toChecksumAddress(to),
       from: Web3.utils.toChecksumAddress(from),
-      amount: BigInt(data).toString(),
+      amount: amount.toString(),
       contractAddress: Web3.utils.toChecksumAddress(contractAddress),
       callStack: `log:${Number(logIndex)}`
     };
@@ -536,7 +540,7 @@ export class EVMTransactionModel extends BaseTransaction<IEVMTransaction> {
    * @param {Array<string>} addresses
    */
   getEffectsForAddresses(tx: IEVMTransactionInProcess, addresses: Array<string>): Effect[] {
-    const effects = tx.receiptLogEffectsProcessed ? (tx.effects || []) : (tx.effects?.length ? tx.effects : this.getEffects(tx));
+    const effects = tx.receiptLogEffectsProcessed || tx.receiptLogEffectsUnavailable ? (tx.effects || []) : (tx.effects?.length ? tx.effects : this.getEffects(tx));
     const addySet = new Set(addresses.map(a => a.toLowerCase()));
     return effects.filter(effect => addySet.has(effect.to.toLowerCase()) || addySet.has(effect.from.toLowerCase()));
   }

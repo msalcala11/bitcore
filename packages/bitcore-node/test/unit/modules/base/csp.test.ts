@@ -829,6 +829,53 @@ describe('BaseEVMStateProvider: populateReceipt', function() {
     expect(updateOne.called).to.equal(false);
   });
 
+  it('marks missing lazy receipt-log refetches unavailable', async function() {
+    const updateOne = sandbox.stub().resolves();
+    sandbox.stub(EVMTransactionStorage, 'collection').get(() => ({ updateOne }));
+    const provider = new BaseEVMStateProvider('ETH');
+    const getReceipt = sandbox.stub(provider, 'getReceipt').resolves(null);
+    const getEffects = sandbox.spy(EVMTransactionStorage, 'getEffects');
+    const tx = {
+      _id: new ObjectId(),
+      txid,
+      chain: 'ETH',
+      network: 'mainnet',
+      from: sourceAddress,
+      to: busdToken,
+      value: 0,
+      gasPrice: 20,
+      gasLimit: 1500000,
+      nonce: 79903,
+      transactionIndex: 0,
+      receipt: {
+        status: true,
+        transactionHash: txid,
+        transactionIndex: 0,
+        blockHash: '0x0ce917ca8e25cccd7228a92895cc11c54fd61479dcec63c3234f16957e1970d9',
+        blockNumber: 15777684,
+        cumulativeGasUsed: 0,
+        gasUsed: 100
+      },
+      effects: []
+    } as any;
+
+    await provider.populateReceipt(tx);
+    provider.populateEffects(tx);
+    provider.populateEffectsForAddresses(tx, [walletAddress]);
+
+    expect(getReceipt.callCount).to.equal(1);
+    expect(getEffects.callCount).to.equal(0);
+    expect(tx.effects).to.deep.equal([]);
+    expect(tx.receiptLogEffectsUnavailable).to.equal(true);
+    expect(updateOne.firstCall.args[1].$set).to.deep.equal({
+      receiptLogEffectsUnavailable: true
+    });
+
+    await provider.populateReceipt(tx);
+
+    expect(getReceipt.callCount).to.equal(1);
+  });
+
   it('does not refetch receipts with known-empty logs', async function() {
     const updateOne = sandbox.stub().resolves();
     sandbox.stub(EVMTransactionStorage, 'collection').get(() => ({ updateOne }));
