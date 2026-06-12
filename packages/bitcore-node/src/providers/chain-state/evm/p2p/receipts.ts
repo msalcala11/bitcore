@@ -6,6 +6,7 @@ import type { Web3 } from '@bitpay-labs/crypto-wallet-core';
 const DEFAULT_RECEIPT_CONCURRENCY = 8;
 const DEFAULT_RECEIPT_RETRIES = 3;
 const DEFAULT_RECEIPT_RETRY_DELAY_MS = 250;
+const blockReceiptsUnsupportedProviders = new WeakSet<object>();
 
 export function getReceiptFetchConcurrency(configuredConcurrency?: number, workerCount = 1) {
   if (configuredConcurrency !== undefined && configuredConcurrency !== null) {
@@ -57,11 +58,18 @@ async function getBlockReceipts(
   if (!blockId) {
     return;
   }
+  const provider = getReceiptProvider(web3);
+  if (!provider || blockReceiptsUnsupportedProviders.has(provider)) {
+    return;
+  }
 
   let receipts: any;
   try {
-    receipts = await requestBlockReceipts(web3, blockId);
-  } catch {
+    receipts = await requestBlockReceipts(provider, blockId);
+  } catch (err) {
+    if (isUnsupportedBlockReceiptsError(err)) {
+      blockReceiptsUnsupportedProviders.add(provider);
+    }
     return;
   }
 
@@ -96,8 +104,11 @@ function getBlockId(txs: IEVMTransactionInProcess[]) {
   return;
 }
 
-async function requestBlockReceipts(web3: Web3, blockId: string) {
-  const provider = (web3 as any).currentProvider || (web3.eth as any).currentProvider;
+function getReceiptProvider(web3: Web3) {
+  return (web3 as any).currentProvider || (web3.eth as any).currentProvider;
+}
+
+async function requestBlockReceipts(provider: any, blockId: string) {
   if (provider?.request) {
     return provider.request({ method: 'eth_getBlockReceipts', params: [blockId] });
   }
@@ -119,6 +130,16 @@ async function requestBlockReceipts(web3: Web3, blockId: string) {
       });
     });
   }
+}
+
+function isUnsupportedBlockReceiptsError(err: any) {
+  const code = err?.code ?? err?.error?.code;
+  const message = String(err?.message || err?.error?.message || err || '').toLowerCase();
+  return code === -32601 ||
+    message.includes('method not found') ||
+    message.includes('method not supported') ||
+    message.includes('does not exist') ||
+    message.includes('not available');
 }
 
 async function getReceiptWithRetry(
@@ -148,12 +169,46 @@ async function getReceiptWithRetry(
 }
 
 function setReceiptAndFee(tx: IEVMTransactionInProcess, receipt: any) {
-  tx.receipt = Utils.BI.scrubBigIntsInObject(receipt) as unknown as TxReceipt;
+  tx.receipt = normalizeReceipt(receipt) as unknown as TxReceipt;
   const gasUsed = toBigInt(receipt.gasUsed ?? tx.receipt.gasUsed);
   const gasPrice = toBigInt(receipt.effectiveGasPrice ?? (tx.receipt as any).effectiveGasPrice ?? tx.gasPrice);
   if (gasUsed !== undefined && gasPrice !== undefined && gasUsed >= 0n && gasPrice >= 0n) {
     tx.fee = Number(gasUsed * gasPrice);
   }
+}
+
+function normalizeReceipt(receipt: any) {
+  const normalized = Utils.BI.scrubBigIntsInObject(receipt);
+  normalized.status = normalizeReceiptStatus(normalized.status);
+  for (const field of ['transactionIndex', 'blockNumber', 'cumulativeGasUsed', 'gasUsed', 'effectiveGasPrice']) {
+    normalized[field] = normalizeNumber(normalized[field]);
+  }
+  if (normalized.logs?.length) {
+    for (const log of normalized.logs) {
+      log.logIndex = normalizeNumber(log.logIndex);
+      log.transactionIndex = normalizeNumber(log.transactionIndex);
+      log.blockNumber = normalizeNumber(log.blockNumber);
+    }
+  }
+  return normalized;
+}
+
+function normalizeReceiptStatus(status: any) {
+  const normalizedStatus = typeof status === 'string' ? status.toLowerCase() : status;
+  if (normalizedStatus === '0x1') {
+    return true;
+  }
+  if (normalizedStatus === '0x0') {
+    return false;
+  }
+  return status;
+}
+
+function normalizeNumber(value: any) {
+  if (typeof value === 'string' && value.startsWith('0x')) {
+    return Number(BigInt(value));
+  }
+  return value;
 }
 
 function toBigInt(value: any): bigint | undefined {
