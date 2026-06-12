@@ -213,12 +213,14 @@ export class MoralisStateProvider extends BaseEVMStateProvider {
       this._addAddressToSubscription({ chainId, address })
         .catch(e => logger.warn(`Failed to add address to ${this.chain}:${network} Moralis subscription: %o`, e));
     }
+    transactionStream = transactionStream
+      .eventPipe(populateReceipt)
+      .eventPipe(populateEffects);
+
     if (args.tokenAddress) {
       transactionStream = transactionStream.eventPipe(new TxidDedupeTransform(walletAddresses));
     }
-    return transactionStream
-      .eventPipe(populateReceipt)
-      .eventPipe(populateEffects);
+    return transactionStream;
   }
 
   // @override

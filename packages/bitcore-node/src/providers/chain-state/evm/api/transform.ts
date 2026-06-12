@@ -70,7 +70,7 @@ export class EVMListTransactionsStream extends TransformWithEventPipe {
       if (!sendingToOurself) {
         baseTx.category = 'send';
         baseTx.satoshis = this.tokenAddress && matchingSendEffects.length
-          ? -Number(matchingSendEffects.reduce((amount, effect) => amount + BigInt(effect.amount || 0), 0n))
+          ? -matchingSendEffects.reduce((amount, effect) => amount + BigInt(effect.amount || 0), 0n)
           : -transaction.value;
         this.push(
           jsonStringify(baseTx) + '\n'
@@ -115,14 +115,18 @@ export class TxidDedupeTransform extends TransformWithEventPipe {
   }
 
   _transform(transaction: MongoBound<IEVMTransactionTransformed>, _, done) {
-    if (transaction.txid) {
+    if (!transaction.receiptLogEffectsProcessed || !transaction.effects?.length) {
+      this.push(transaction);
+    } else if (transaction.txid) {
       const key = `${transaction.txid}:${this.getDirection(transaction)}`;
       if (this.seenKeys.has(key)) {
         return done();
       }
       this.rememberKey(key);
+      this.push(transaction);
+    } else {
+      this.push(transaction);
     }
-    this.push(transaction);
     return done();
   }
 

@@ -520,6 +520,7 @@ describe('MultiProviderEVMStateProvider: _buildWalletTransactionsStream tokenAdd
     const populateEffects = new TransformWithEventPipe({ objectMode: true, passThrough: true });
     sinon.spy(transactionStream, 'eventPipe');
     sinon.spy(populateReceipt, 'eventPipe');
+    sinon.spy(populateEffects, 'eventPipe');
     return {
       transactionStream,
       populateReceipt,
@@ -539,10 +540,11 @@ describe('MultiProviderEVMStateProvider: _buildWalletTransactionsStream tokenAdd
     expect(adapter.streamAddressTransactions.callCount).to.equal(0);
     expect(adapter.streamERC20Transfers.firstCall.args[0].tokenAddress).to.equal('0xtoken');
     expect(fakeStream.eventPipe.alwaysCalledWith(streamParams.transactionStream)).to.equal(true);
-    expect((streamParams.transactionStream.eventPipe as sinon.SinonSpy).calledOnce).to.equal(true);
-    expect((streamParams.transactionStream.eventPipe as sinon.SinonSpy).firstCall.args[0]).to.be.instanceOf(TxidDedupeTransform);
+    expect((streamParams.transactionStream.eventPipe as sinon.SinonSpy).calledOnceWith(streamParams.populateReceipt)).to.equal(true);
     expect((streamParams.populateReceipt.eventPipe as sinon.SinonSpy).calledOnceWith(streamParams.populateEffects)).to.equal(true);
-    expect(result).to.equal(streamParams.populateEffects);
+    expect((streamParams.populateEffects.eventPipe as sinon.SinonSpy).calledOnce).to.equal(true);
+    expect((streamParams.populateEffects.eventPipe as sinon.SinonSpy).firstCall.args[0]).to.be.instanceOf(TxidDedupeTransform);
+    expect(result).to.be.instanceOf(TxidDedupeTransform);
   });
 
   it('routes to streamAddressTransactions when no tokenAddress is set', async function() {
@@ -638,6 +640,32 @@ describe('BaseEVMStateProvider: populateReceipt', function() {
       effects: [expectedEffect],
       receiptLogEffectsProcessed: true
     });
+  });
+
+  it('does not persist populated receipts for external rows without an id', async function() {
+    const updateOne = sandbox.stub().resolves();
+    sandbox.stub(EVMTransactionStorage, 'collection').get(() => ({ updateOne }));
+    const provider = new BaseEVMStateProvider('ETH');
+    sandbox.stub(provider, 'getReceipt').resolves(receiptWithTransferLog() as any);
+    const tx = {
+      txid,
+      chain: 'ETH',
+      network: 'mainnet',
+      from: '0x963737C550E70FFe4D59464542a28604eDb2eF9a',
+      to: sourceAddress,
+      value: 0,
+      gasPrice: 20,
+      gasLimit: 1500000,
+      nonce: 79903,
+      transactionIndex: 0,
+      effects: []
+    } as any;
+
+    await provider.populateReceipt(tx);
+
+    expect(tx.effects).to.deep.equal([expectedTransferEffect()]);
+    expect(tx.receipt.logs).to.equal(undefined);
+    expect(updateOne.called).to.equal(false);
   });
 
   it('refetches stripped receipts before merging ERC20 effects into existing partial effects', async function() {

@@ -19,6 +19,18 @@ export async function addReceiptsToTxs(
   txs: IEVMTransactionInProcess[],
   opts: { concurrency?: number; retries?: number; retryDelayMs?: number } = {}
 ) {
+  if (!txs.length) {
+    return;
+  }
+
+  const blockReceipts = await getBlockReceipts(web3, txs);
+  if (blockReceipts) {
+    for (const tx of txs) {
+      setReceiptAndFee(tx, blockReceipts.get(tx.txid.toLowerCase()));
+    }
+    return;
+  }
+
   const concurrency = getReceiptFetchConcurrency(opts.concurrency);
   const workerCount = Math.min(concurrency, txs.length);
   let nextIndex = 0;
@@ -35,6 +47,78 @@ export async function addReceiptsToTxs(
   });
 
   await Promise.all(workers);
+}
+
+async function getBlockReceipts(
+  web3: Web3,
+  txs: IEVMTransactionInProcess[]
+): Promise<Map<string, any> | undefined> {
+  const blockId = getBlockId(txs);
+  if (!blockId) {
+    return;
+  }
+
+  let receipts: any;
+  try {
+    receipts = await requestBlockReceipts(web3, blockId);
+  } catch {
+    return;
+  }
+
+  if (!Array.isArray(receipts)) {
+    return;
+  }
+
+  const receiptsByTxid = new Map<string, any>();
+  for (const receipt of receipts) {
+    if (receipt?.transactionHash) {
+      receiptsByTxid.set(receipt.transactionHash.toLowerCase(), receipt);
+    }
+  }
+
+  for (const tx of txs) {
+    if (!receiptsByTxid.has(tx.txid.toLowerCase())) {
+      return;
+    }
+  }
+  return receiptsByTxid;
+}
+
+function getBlockId(txs: IEVMTransactionInProcess[]) {
+  const blockHash = txs[0].blockHash;
+  if (blockHash && txs.every(tx => tx.blockHash === blockHash)) {
+    return blockHash;
+  }
+  const blockHeight = txs[0].blockHeight;
+  if (blockHeight !== undefined && blockHeight >= 0 && txs.every(tx => tx.blockHeight === blockHeight)) {
+    return `0x${blockHeight.toString(16)}`;
+  }
+  return;
+}
+
+async function requestBlockReceipts(web3: Web3, blockId: string) {
+  const provider = (web3 as any).currentProvider || (web3.eth as any).currentProvider;
+  if (provider?.request) {
+    return provider.request({ method: 'eth_getBlockReceipts', params: [blockId] });
+  }
+  if (provider?.send) {
+    return new Promise((resolve, reject) => {
+      provider.send({
+        jsonrpc: '2.0',
+        id: Date.now(),
+        method: 'eth_getBlockReceipts',
+        params: [blockId]
+      }, (err: any, response: any) => {
+        if (err) {
+          return reject(err);
+        }
+        if (response?.error) {
+          return reject(response.error);
+        }
+        return resolve(response?.result);
+      });
+    });
+  }
 }
 
 async function getReceiptWithRetry(

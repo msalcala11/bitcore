@@ -172,6 +172,83 @@ describe('P2P Service', function() {
     expect(txs.map(tx => tx.fee)).to.deep.equal([200, 200, 200, 200, 200]);
   });
 
+  it('should fetch all EVM receipts for a block in one RPC call when supported', async function() {
+    const txs = new Array(3).fill(undefined).map((_, idx) => ({
+      txid: `0x${idx}`,
+      blockHash: '0xblock',
+      blockHeight: 1,
+      gasPrice: 50
+    })) as any[];
+    const receipts = txs.map(tx => ({
+      status: true,
+      transactionHash: tx.txid,
+      transactionIndex: 0,
+      blockHash: '0xblock',
+      blockNumber: 1,
+      cumulativeGasUsed: 1,
+      gasUsed: 10,
+      effectiveGasPrice: 20,
+      logs: []
+    }));
+    const request = sandbox.stub().resolves(receipts);
+    const web3 = {
+      currentProvider: { request },
+      eth: {
+        getTransactionReceipt: sandbox.stub()
+      }
+    };
+
+    await addReceiptsToTxs(web3 as any, txs, { concurrency: 2, retries: 1, retryDelayMs: 0 });
+
+    expect(request.calledOnce).to.equal(true);
+    expect(request.firstCall.args[0]).to.deep.equal({ method: 'eth_getBlockReceipts', params: ['0xblock'] });
+    expect(web3.eth.getTransactionReceipt.called).to.equal(false);
+    expect(txs.map(tx => tx.receipt.transactionHash)).to.deep.equal(['0x0', '0x1', '0x2']);
+    expect(txs.map(tx => tx.fee)).to.deep.equal([200, 200, 200]);
+  });
+
+  it('should fall back to per-transaction EVM receipts when block receipts are incomplete', async function() {
+    const txs = new Array(2).fill(undefined).map((_, idx) => ({
+      txid: `0x${idx}`,
+      blockHash: '0xblock',
+      blockHeight: 1,
+      gasPrice: 50
+    })) as any[];
+    const request = sandbox.stub().resolves([{
+      status: true,
+      transactionHash: '0x0',
+      transactionIndex: 0,
+      blockHash: '0xblock',
+      blockNumber: 1,
+      cumulativeGasUsed: 1,
+      gasUsed: 10,
+      effectiveGasPrice: 20,
+      logs: []
+    }]);
+    const web3 = {
+      currentProvider: { request },
+      eth: {
+        getTransactionReceipt: sandbox.stub().callsFake(async (txid: string) => ({
+          status: true,
+          transactionHash: txid,
+          transactionIndex: 0,
+          blockHash: '0xblock',
+          blockNumber: 1,
+          cumulativeGasUsed: 1,
+          gasUsed: 10,
+          effectiveGasPrice: 20,
+          logs: []
+        }))
+      }
+    };
+
+    await addReceiptsToTxs(web3 as any, txs, { concurrency: 2, retries: 1, retryDelayMs: 0 });
+
+    expect(request.calledOnce).to.equal(true);
+    expect(web3.eth.getTransactionReceipt.callCount).to.equal(2);
+    expect(txs.map(tx => tx.receipt.transactionHash)).to.deep.equal(['0x0', '0x1']);
+  });
+
   it('should split default EVM receipt concurrency across sync workers', function() {
     expect(getReceiptFetchConcurrency()).to.equal(8);
     expect(getReceiptFetchConcurrency(undefined, 4)).to.equal(2);

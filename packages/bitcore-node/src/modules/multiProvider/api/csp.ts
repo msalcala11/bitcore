@@ -392,13 +392,15 @@ export class MultiProviderEVMStateProvider extends BaseEVMStateProvider {
       }
     }
 
+    transactionStream = transactionStream
+      .eventPipe(populateReceipt)
+      .eventPipe(populateEffects);
+
     if (tokenAddress) {
       transactionStream = transactionStream.eventPipe(new TxidDedupeTransform(walletAddresses));
     }
 
-    return transactionStream
-      .eventPipe(populateReceipt)
-      .eventPipe(populateEffects);
+    return transactionStream;
   }
 
   // @override
