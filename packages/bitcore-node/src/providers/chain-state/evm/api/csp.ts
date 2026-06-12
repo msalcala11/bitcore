@@ -465,6 +465,10 @@ export class BaseEVMStateProvider extends InternalStateProvider implements IChai
           update.fee = fee;
         }
         shouldUpdate = true;
+      } else if (shouldRefetchForLogEffects) {
+        tx.receiptLogEffectsUnavailable = true;
+        update.receiptLogEffectsUnavailable = true;
+        shouldUpdate = true;
       }
     }
 
@@ -522,6 +526,7 @@ export class BaseEVMStateProvider extends InternalStateProvider implements IChai
     return !!tx.receipt &&
       tx.receipt.logs === undefined &&
       !tx.receiptLogEffectsProcessed &&
+      !tx.receiptLogEffectsUnavailable &&
       !EVMTransactionStorage.isFailedReceipt(tx.receipt);
   }
 
@@ -542,9 +547,9 @@ export class BaseEVMStateProvider extends InternalStateProvider implements IChai
   }
 
   populateEffects(tx: MongoBound<IEVMTransaction>) {
-    if (tx.receiptLogEffectsProcessed && !tx.effects) {
+    if ((tx.receiptLogEffectsProcessed || tx.receiptLogEffectsUnavailable) && !tx.effects) {
       tx.effects = [];
-    } else if (!tx.effects || (tx.effects.length === 0 && !tx.receiptLogEffectsProcessed)) {
+    } else if (!tx.effects || (tx.effects.length === 0 && !tx.receiptLogEffectsProcessed && !tx.receiptLogEffectsUnavailable)) {
       tx.effects = EVMTransactionStorage.getEffects(tx as IEVMTransactionInProcess);
     }
     return tx;

@@ -3,7 +3,7 @@ import { TransformWithEventPipe } from '../../../../utils/streamWithEventPipe';
 import { IEVMTransaction } from '../types';
 import { BaseEVMStateProvider } from './csp';
 
-type ReceiptEnrichment = Pick<IEVMTransaction, 'effects' | 'fee' | 'receipt' | 'receiptLogEffectsProcessed'>;
+type ReceiptEnrichment = Pick<IEVMTransaction, 'effects' | 'fee' | 'receipt' | 'receiptLogEffectsProcessed' | 'receiptLogEffectsUnavailable'>;
 
 export class PopulateReceiptTransform extends TransformWithEventPipe {
   private enrichedTxs = new Map<string, ReceiptEnrichment>();
@@ -45,7 +45,8 @@ export class PopulateReceiptTransform extends TransformWithEventPipe {
       effects: tx.effects,
       fee: tx.fee,
       receipt: tx.receipt,
-      receiptLogEffectsProcessed: tx.receiptLogEffectsProcessed
+      receiptLogEffectsProcessed: tx.receiptLogEffectsProcessed,
+      receiptLogEffectsUnavailable: tx.receiptLogEffectsUnavailable
     };
   }
 
@@ -61,6 +62,9 @@ export class PopulateReceiptTransform extends TransformWithEventPipe {
     }
     if (enrichment.receiptLogEffectsProcessed !== undefined) {
       tx.receiptLogEffectsProcessed = enrichment.receiptLogEffectsProcessed;
+    }
+    if (enrichment.receiptLogEffectsUnavailable !== undefined) {
+      tx.receiptLogEffectsUnavailable = enrichment.receiptLogEffectsUnavailable;
     }
   }
 

@@ -162,6 +162,7 @@ export type IEVMTransaction = ITransaction & {
   receipt?: TxReceipt;
   effects?: Effect[]; // Meant to replace abiType, internal, calls and data on stored txs
   receiptLogEffectsProcessed?: boolean;
+  receiptLogEffectsUnavailable?: boolean;
   confirmations?: number;
 };
 
