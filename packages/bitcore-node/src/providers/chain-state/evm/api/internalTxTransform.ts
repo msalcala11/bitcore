@@ -55,6 +55,7 @@ export class InternalTxRelatedFilterTransform extends TransformWithEventPipe {
           _tx.from = internalTx.from;
             
         }
+        _tx.effects = [internalTx];
         // This is how a requester can verify uniqueness in light of duplicated txids
         _tx.callStack = internalTx.callStack;
         this.push(_tx);
