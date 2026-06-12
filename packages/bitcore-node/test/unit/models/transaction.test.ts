@@ -855,6 +855,19 @@ describe('Transaction Model', function() {
         ]);
       });
 
+      it('should parse receipt-log ERC20 effects with buffer contract addresses', async () => {
+        const effects = EVMTransactionStorage.getEffects(missingReceiveTx({
+          receipt: {
+            ...missingReceiveTx().receipt,
+            logs: [receiptTransferLog({
+              address: Buffer.from(busdToken.replace(/^0x/, ''), 'hex')
+            })]
+          }
+        }) as any);
+
+        expect(effects).to.deep.equal([expectedMissingReceiveEffect()]);
+      });
+
       it('should recompute wallets from receipt-log token effects during block resync', async () => {
         const walletId = new ObjectId('5d93abeba811051da3af9a35');
         sandbox.stub(Config, 'chainConfig').returns({ leanTransactionStorage: false } as any);

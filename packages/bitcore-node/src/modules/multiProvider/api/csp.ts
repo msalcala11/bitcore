@@ -344,7 +344,7 @@ export class MultiProviderEVMStateProvider extends BaseEVMStateProvider {
   async _buildWalletTransactionsStream(params: StreamWalletTransactionsParams, streamParams: BuildWalletTxsStreamParams) {
     const { network, args } = params;
     let { transactionStream } = streamParams;
-    const { walletAddresses } = streamParams;
+    const { populateReceipt, populateEffects, walletAddresses } = streamParams;
     const chainId = await this.getChainId({ network });
     const providers = this.getProvidersForNetwork(network);
     const tokenAddress = (args as any)?.tokenAddress;
@@ -391,7 +391,9 @@ export class MultiProviderEVMStateProvider extends BaseEVMStateProvider {
       }
     }
 
-    return transactionStream;
+    return transactionStream
+      .eventPipe(populateReceipt)
+      .eventPipe(populateEffects);
   }
 
   // @override

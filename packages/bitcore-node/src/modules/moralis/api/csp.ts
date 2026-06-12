@@ -189,7 +189,7 @@ export class MoralisStateProvider extends BaseEVMStateProvider {
   async _buildWalletTransactionsStream(params: StreamWalletTransactionsParams, streamParams: BuildWalletTxsStreamParams) {
     const { network, args } = params;
     let { transactionStream } = streamParams;
-    const { walletAddresses } = streamParams;
+    const { populateReceipt, populateEffects, walletAddresses } = streamParams;
 
     const chainId = await this.getChainId({ network });
     for (const address of walletAddresses) {
@@ -212,7 +212,9 @@ export class MoralisStateProvider extends BaseEVMStateProvider {
       this._addAddressToSubscription({ chainId, address })
         .catch(e => logger.warn(`Failed to add address to ${this.chain}:${network} Moralis subscription: %o`, e));
     }
-    return transactionStream;
+    return transactionStream
+      .eventPipe(populateReceipt)
+      .eventPipe(populateEffects);
   }
 
   // @override
