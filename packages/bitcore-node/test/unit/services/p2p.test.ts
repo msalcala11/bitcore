@@ -1,4 +1,5 @@
 import { expect } from 'chai';
+import { EventEmitter } from 'events';
 import * as sinon from 'sinon';
 import { Web3 } from '@bitpay-labs/crypto-wallet-core';
 import { Config } from '../../../src/services/config';
@@ -8,7 +9,8 @@ import { BaseEVMStateProvider } from '../../../src/providers/chain-state/evm/api
 import { unitAfterHelper, unitBeforeHelper } from '../../helpers/unit';
 import { block } from '../../data/ETH/gethMainnet24486902';
 import { Rpcs } from '../../../src/providers/chain-state/evm/p2p/rpcs';
-import { addReceiptsToTxs } from '../../../src/providers/chain-state/evm/p2p/receipts';
+import { addReceiptsToTxs, getReceiptFetchConcurrency } from '../../../src/providers/chain-state/evm/p2p/receipts';
+import { MultiThreadSync } from '../../../src/providers/chain-state/evm/p2p/sync';
 
 describe('P2P Service', function() {
   const sandbox = sinon.createSandbox();
@@ -168,6 +170,42 @@ describe('P2P Service', function() {
     expect(web3.eth.getTransactionReceipt.callCount).to.equal(6);
     expect(txs.map(tx => tx.receipt.transactionHash)).to.deep.equal(['0x0', '0x1', '0x2', '0x3', '0x4']);
     expect(txs.map(tx => tx.fee)).to.deep.equal([200, 200, 200, 200, 200]);
+  });
+
+  it('should split default EVM receipt concurrency across sync workers', function() {
+    expect(getReceiptFetchConcurrency()).to.equal(8);
+    expect(getReceiptFetchConcurrency(undefined, 4)).to.equal(2);
+    expect(getReceiptFetchConcurrency(undefined, 16)).to.equal(1);
+    expect(getReceiptFetchConcurrency(6, 4)).to.equal(6);
+    expect(getReceiptFetchConcurrency(0, 4)).to.equal(1);
+  });
+
+  it('should pass sync worker count to EVM receipt workers', async function() {
+    const workerData: any[] = [];
+    sandbox.stub(Config, 'get').returns({
+      chains: {
+        ETH: {
+          mainnet: {
+            threads: 3,
+            providers: [{}]
+          }
+        }
+      }
+    });
+    class MockMultiThreadSync extends MultiThreadSync {
+      getWorkerThread(data) {
+        workerData.push(data);
+        return Object.assign(new EventEmitter(), { threadId: workerData.length }) as any;
+      }
+    }
+
+    await new MockMultiThreadSync({ chain: 'ETH', network: 'mainnet' }).initializeThreads();
+
+    expect(workerData).to.deep.equal([
+      { chain: 'ETH', network: 'mainnet', receiptFetchWorkerCount: 3 },
+      { chain: 'ETH', network: 'mainnet', receiptFetchWorkerCount: 3 },
+      { chain: 'ETH', network: 'mainnet', receiptFetchWorkerCount: 3 }
+    ]);
   });
 
   it('should fail explicitly when an EVM receipt remains missing', async function() {

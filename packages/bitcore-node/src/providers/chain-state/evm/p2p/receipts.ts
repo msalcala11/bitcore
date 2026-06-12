@@ -7,12 +7,19 @@ const DEFAULT_RECEIPT_CONCURRENCY = 8;
 const DEFAULT_RECEIPT_RETRIES = 3;
 const DEFAULT_RECEIPT_RETRY_DELAY_MS = 250;
 
+export function getReceiptFetchConcurrency(configuredConcurrency?: number, workerCount = 1) {
+  if (configuredConcurrency !== undefined && configuredConcurrency !== null) {
+    return Math.max(1, configuredConcurrency);
+  }
+  return Math.max(1, Math.ceil(DEFAULT_RECEIPT_CONCURRENCY / Math.max(1, workerCount)));
+}
+
 export async function addReceiptsToTxs(
   web3: Web3,
   txs: IEVMTransactionInProcess[],
   opts: { concurrency?: number; retries?: number; retryDelayMs?: number } = {}
 ) {
-  const concurrency = Math.max(1, opts.concurrency || DEFAULT_RECEIPT_CONCURRENCY);
+  const concurrency = getReceiptFetchConcurrency(opts.concurrency);
   const workerCount = Math.min(concurrency, txs.length);
   let nextIndex = 0;
 

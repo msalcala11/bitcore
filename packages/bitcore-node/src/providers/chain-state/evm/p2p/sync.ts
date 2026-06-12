@@ -197,7 +197,7 @@ export class MultiThreadSync extends EventEmitter {
     }
 
     logger.info(`Initializing ${threadCnt} syncing threads.`);
-    const workerData = { chain: this.chain, network: this.network };
+    const workerData = { chain: this.chain, network: this.network, receiptFetchWorkerCount: threadCnt };
     for (let i = 0; i < threadCnt; i++) {
       const thread = this.getWorkerThread(workerData);
       this.threads.push(thread);
