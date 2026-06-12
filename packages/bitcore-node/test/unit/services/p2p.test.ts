@@ -185,6 +185,7 @@ describe('P2P Service', function() {
       transactionIndex: '0x0',
       blockHash: '0xblock',
       blockNumber: '0x1',
+      contractAddress: null,
       cumulativeGasUsed: '0x1',
       gasUsed: '0xa',
       effectiveGasPrice: '0x14',
@@ -209,6 +210,7 @@ describe('P2P Service', function() {
     expect(txs.map(tx => tx.receipt.status)).to.deep.equal([true, true, true]);
     expect(txs.map(tx => tx.receipt.gasUsed)).to.deep.equal([10, 10, 10]);
     expect((txs[0].receipt as any).effectiveGasPrice).to.equal(20);
+    expect((txs[0].receipt as any).contractAddress).to.equal(undefined);
     expect((txs[0].receipt as any).logsBloom).to.equal(undefined);
     expect((txs[0].receipt as any).type).to.equal(undefined);
     expect(txs.map(tx => tx.fee)).to.deep.equal([200, 200, 200]);

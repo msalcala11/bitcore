@@ -230,7 +230,7 @@ export function normalizeReceipt(receipt: any) {
 function copyDefinedFields(source: any, fields: string[]) {
   const target = {} as any;
   for (const field of fields) {
-    if (source?.[field] !== undefined) {
+    if (source?.[field] !== undefined && source?.[field] !== null) {
       target[field] = source[field];
     }
   }
