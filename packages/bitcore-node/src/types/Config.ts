@@ -64,8 +64,8 @@ export interface IEVMNetworkConfig extends INetworkConfig {
   publicWeb3?: boolean; // Allow web3 rpc to be open via bitcore-node API endpoint
   threads?: number; // Defaults to your CPU's capabilities. Currently only available for EVM chains
   mtSyncTipPad?: number; // Default: 100. Multi-threaded sync will sync up to latest block height minus mtSyncTipPad. MT syncing is blind to reorgs. This helps ensure reorgs are accounted for near the tip.
-  receiptFetchConcurrency?: number; // Default: 8 for single-thread sync, split across workers for multithread sync. Explicit values apply per worker.
-  receiptFetchRetries?: number; // Default: 3. Number of retries for each transaction receipt.
+  receiptFetchConcurrency?: number; // Default: 8 for single-thread sync, split across workers for multithread sync. Explicit values apply per worker. Backfills should use eth_getBlockReceipts-capable nodes or nodes with full transaction receipt lookup history.
+  receiptFetchRetries?: number; // Default: 3. Number of retries for each transaction receipt when the block-receipts fast path is unavailable.
   receiptFetchRetryDelayMs?: number; // Default: 250. Initial receipt retry delay; retries use exponential backoff.
   leanTransactionStorage?: boolean; // Removes data, abiType, internal and calls before saving a transaction to the databases
   needsL1Fee?: boolean; // Does this chain require a layer-1 fee to be added to a transaction (e.g. OP-stack chains)?

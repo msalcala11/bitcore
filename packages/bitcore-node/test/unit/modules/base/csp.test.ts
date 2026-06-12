@@ -857,6 +857,21 @@ describe('BaseEVMStateProvider: populateReceipt', function() {
         cumulativeGasUsed: 0,
         gasUsed: 100
       },
+      calls: [{
+        from: sourceAddress,
+        to: busdToken,
+        value: '0',
+        depth: '0',
+        type: 'CALL',
+        abiType: {
+          type: 'ERC20',
+          name: 'transfer',
+          params: [
+            { name: '_to', type: 'address', value: walletAddress },
+            { name: '_value', type: 'uint256', value: amount }
+          ]
+        }
+      }],
       effects: []
     } as any;
 
@@ -864,12 +879,21 @@ describe('BaseEVMStateProvider: populateReceipt', function() {
     provider.populateEffects(tx);
     provider.populateEffectsForAddresses(tx, [walletAddress]);
 
+    const effects = [{
+      to: walletAddress,
+      from: sourceAddress,
+      amount,
+      type: 'ERC20:transfer',
+      contractAddress: busdToken,
+      callStack: '0'
+    }];
     expect(getReceipt.callCount).to.equal(3);
     expect(waitForReceiptRetry.callCount).to.equal(2);
-    expect(getEffects.callCount).to.equal(0);
-    expect(tx.effects).to.deep.equal([]);
+    expect(getEffects.callCount).to.equal(1);
+    expect(tx.effects).to.deep.equal(effects);
     expect(tx.receiptLogEffectsUnavailable).to.equal(true);
     expect(updateOne.firstCall.args[1].$set).to.deep.equal({
+      effects,
       receiptLogEffectsUnavailable: true
     });
 
