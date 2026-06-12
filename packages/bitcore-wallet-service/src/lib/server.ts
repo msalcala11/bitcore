@@ -3940,9 +3940,12 @@ export class WalletService implements IWalletService {
         // This adapter rebuilds the abiType property from data contained in the effects so that it returns what wallet is used to
         // If we remove the slight reliance in the wallet on abiType then we can remove this adapter
         function recreateAbiType(effects) {
-          // Check if any top level effects are ERC20 transfers
+          // Check if any top-level or receipt-log-derived effects are ERC20 transfers
           if (effects && effects.length) {
-            const erc20Transfer = effects.find(e => e.type == 'ERC20:transfer' && e.callStack == '');
+            const erc20Transfer = effects.find(e => {
+              const isReceiptLogEffect = typeof e.callStack == 'string' && e.callStack.startsWith('log:');
+              return e.type == 'ERC20:transfer' && (e.callStack == '' || isReceiptLogEffect);
+            });
             if (erc20Transfer) {
               // This is the only data used in old wallet and bitpay-app
               return { name: 'transfer' };
