@@ -477,8 +477,10 @@ export class BaseEVMStateProvider extends InternalStateProvider implements IChai
       const previousEffectCount = tx.effects?.length || 0;
       const previousEffects = tx.effects ? JSON.stringify(tx.effects) : undefined;
       const wasReceiptLogEffectsProcessed = !!tx.receiptLogEffectsProcessed;
+      let receiptLogEffectsProcessed = false;
       if (EVMTransactionStorage.isFailedReceipt(tx.receipt)) {
         tx.effects = [];
+        receiptLogEffectsProcessed = true;
         if (previousEffectCount) {
           update.effects = tx.effects;
           shouldUpdate = true;
@@ -487,14 +489,16 @@ export class BaseEVMStateProvider extends InternalStateProvider implements IChai
         const effects = [...tx.effects!];
         EVMTransactionStorage.addReceiptLogEffects(tx as IEVMTransactionInProcess, effects);
         tx.effects = effects;
+        receiptLogEffectsProcessed = Array.isArray(tx.receipt.logs);
       } else {
         tx.effects = EVMTransactionStorage.getEffects(tx as IEVMTransactionInProcess);
+        receiptLogEffectsProcessed = !!tx.receiptLogEffectsProcessed;
       }
       if (JSON.stringify(tx.effects) !== previousEffects) {
         update.effects = tx.effects;
         shouldUpdate = true;
       }
-      if (!wasReceiptLogEffectsProcessed) {
+      if (!wasReceiptLogEffectsProcessed && receiptLogEffectsProcessed) {
         tx.receiptLogEffectsProcessed = true;
         update.receiptLogEffectsProcessed = true;
         shouldUpdate = true;

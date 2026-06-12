@@ -7,6 +7,7 @@ import { MultiProviderEVMStateProvider } from '../../../../src/modules/multiProv
 import { MoralisStateProvider } from '../../../../src/modules/moralis/api/csp';
 import { CacheStorage } from '../../../../src/models/cache';
 import { BaseEVMStateProvider } from '../../../../src/providers/chain-state/evm/api/csp';
+import { PopulateReceiptTransform } from '../../../../src/providers/chain-state/evm/api/populateReceiptTransform';
 import { TxidDedupeTransform } from '../../../../src/providers/chain-state/evm/api/transform';
 import { EVMBlockStorage } from '../../../../src/providers/chain-state/evm/models/block';
 import { EVMTransactionStorage } from '../../../../src/providers/chain-state/evm/models/transaction';
@@ -697,6 +698,44 @@ describe('BaseEVMStateProvider: populateReceipt', function() {
     expect(updateOne.called).to.equal(false);
   });
 
+  it('does not mark effects as receipt-log processed when effect derivation did not', async function() {
+    const updateOne = sandbox.stub().resolves();
+    sandbox.stub(EVMTransactionStorage, 'collection').get(() => ({ updateOne }));
+    const provider = new BaseEVMStateProvider('ETH');
+    sandbox.stub(provider, 'getReceipt').resolves(receiptWithTransferLog() as any);
+    const partialEffect = {
+      to: walletAddress,
+      from: sourceAddress,
+      amount: '1',
+      callStack: '0'
+    };
+    sandbox.stub(EVMTransactionStorage, 'getEffects').returns([partialEffect]);
+    const tx = {
+      _id: new ObjectId(),
+      txid,
+      chain: 'ETH',
+      network: 'mainnet',
+      from: sourceAddress,
+      to: busdToken,
+      value: 0,
+      gasPrice: 20,
+      gasLimit: 1500000,
+      nonce: 79903,
+      transactionIndex: 0,
+      effects: []
+    } as any;
+
+    await provider.populateReceipt(tx);
+
+    expect(tx.effects).to.deep.equal([partialEffect]);
+    expect(tx.receiptLogEffectsProcessed).to.equal(undefined);
+    expect(updateOne.firstCall.args[1].$set).to.deep.equal({
+      receipt: tx.receipt,
+      fee: 2000,
+      effects: [partialEffect]
+    });
+  });
+
   it('refetches stripped receipts before merging ERC20 effects into existing partial effects', async function() {
     const updateOne = sandbox.stub().resolves();
     sandbox.stub(EVMTransactionStorage, 'collection').get(() => ({ updateOne }));
@@ -1039,6 +1078,79 @@ describe('BaseEVMStateProvider: populateReceipt', function() {
       effects: [],
       receiptLogEffectsProcessed: true
     });
+  });
+});
+
+describe('PopulateReceiptTransform', function() {
+  let sandbox: sinon.SinonSandbox;
+  const duplicateTxid = '0xbaf62c1c4de9761a421608634a4ad0f7dfbfa3546227c0f4044322bdda095f43';
+  const transferEffect = {
+    type: 'ERC20:transfer',
+    to: '0xa91cFe0DcAd33F36f3c9428D48eCCBD8A71951b4',
+    from: '0xa81011Ae274eF6deBd3BDaB634102c7b6c2C452D',
+    amount: '114519572370000000000',
+    contractAddress: '0x4Fabb145d64652a948d72533023f6E7A623C7C53',
+    callStack: 'log:7'
+  };
+
+  beforeEach(function() { sandbox = sinon.createSandbox(); });
+  afterEach(function() { sandbox.restore(); });
+
+  it('uses the same failed receipt enrichment outcome for duplicate txid rows', async function() {
+    const populateReceipt = sandbox.stub();
+    populateReceipt.onFirstCall().rejects(new Error('rate limited'));
+    populateReceipt.onSecondCall().resolves({
+      txid: duplicateTxid,
+      value: '200',
+      effects: [transferEffect],
+      receiptLogEffectsProcessed: true
+    });
+    const stream = new PopulateReceiptTransform({ populateReceipt } as any);
+    const rows = new Array<any>();
+    const done = new Promise<void>((resolve, reject) => {
+      stream
+        .on('data', tx => rows.push(tx))
+        .on('error', reject)
+        .on('end', resolve);
+    });
+
+    stream.write({ txid: duplicateTxid, value: '100', effects: [] } as any);
+    stream.write({ txid: duplicateTxid, value: '200', effects: [] } as any);
+    stream.end();
+    await done;
+
+    expect(populateReceipt.callCount).to.equal(1);
+    expect(rows.map(row => row.value)).to.deep.equal(['100', '200']);
+    expect(rows.map(row => row.receiptLogEffectsProcessed)).to.deep.equal([undefined, undefined]);
+  });
+
+  it('reuses successful receipt enrichment for duplicate txid rows', async function() {
+    const populateReceipt = sandbox.stub().resolves({
+      txid: duplicateTxid,
+      value: '100',
+      fee: 2000,
+      receipt: { status: true },
+      effects: [transferEffect],
+      receiptLogEffectsProcessed: true
+    });
+    const stream = new PopulateReceiptTransform({ populateReceipt } as any);
+    const rows = new Array<any>();
+    const done = new Promise<void>((resolve, reject) => {
+      stream
+        .on('data', tx => rows.push(tx))
+        .on('error', reject)
+        .on('end', resolve);
+    });
+
+    stream.write({ txid: duplicateTxid, value: '100', effects: [] } as any);
+    stream.write({ txid: duplicateTxid, value: '200', effects: [] } as any);
+    stream.end();
+    await done;
+
+    expect(populateReceipt.callCount).to.equal(1);
+    expect(rows.map(row => row.value)).to.deep.equal(['100', '200']);
+    expect(rows.map(row => row.effects)).to.deep.equal([[transferEffect], [transferEffect]]);
+    expect(rows.map(row => row.receiptLogEffectsProcessed)).to.deep.equal([true, true]);
   });
 });
 
