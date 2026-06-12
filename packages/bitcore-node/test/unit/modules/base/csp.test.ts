@@ -760,6 +760,10 @@ describe('BaseEVMStateProvider: populateReceipt', function() {
     } as any;
 
     await provider.populateReceipt(tx);
+    provider.populateEffects(tx);
+    expect(tx.effects).to.deep.equal([]);
+
+    provider.populateEffectsForAddresses(tx, [walletAddress]);
 
     expect(getReceipt.callCount).to.equal(0);
     expect(tx.effects).to.deep.equal([]);
