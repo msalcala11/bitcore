@@ -110,27 +110,39 @@ function getReceiptProvider(web3: Web3) {
 }
 
 async function requestBlockReceipts(provider: any, blockId: string) {
+  const payload = {
+    jsonrpc: '2.0',
+    id: Date.now(),
+    method: 'eth_getBlockReceipts',
+    params: [blockId]
+  };
   if (provider?.request) {
-    return provider.request({ method: 'eth_getBlockReceipts', params: [blockId] });
+    return unwrapRpcResponse(await provider.request(payload));
   }
   if (provider?.send) {
     return new Promise((resolve, reject) => {
-      provider.send({
-        jsonrpc: '2.0',
-        id: Date.now(),
-        method: 'eth_getBlockReceipts',
-        params: [blockId]
-      }, (err: any, response: any) => {
+      provider.send(payload, (err: any, response: any) => {
         if (err) {
           return reject(err);
         }
-        if (response?.error) {
-          return reject(response.error);
+        try {
+          return resolve(unwrapRpcResponse(response));
+        } catch (responseError) {
+          return reject(responseError);
         }
-        return resolve(response?.result);
       });
     });
   }
+}
+
+function unwrapRpcResponse(response: any) {
+  if (response?.error) {
+    throw response.error;
+  }
+  if (response && typeof response === 'object' && 'result' in response) {
+    return response.result;
+  }
+  return response;
 }
 
 function isUnsupportedBlockReceiptsError(err: any) {

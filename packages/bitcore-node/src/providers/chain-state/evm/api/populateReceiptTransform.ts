@@ -42,9 +42,9 @@ export class PopulateReceiptTransform extends TransformWithEventPipe {
 
   private getEnrichment(tx: MongoBound<IEVMTransaction>): ReceiptEnrichment {
     return {
-      effects: tx.effects,
+      effects: this.cloneEffects(tx.effects),
       fee: tx.fee,
-      receipt: tx.receipt,
+      receipt: this.cloneReceipt(tx.receipt),
       receiptLogEffectsProcessed: tx.receiptLogEffectsProcessed,
       receiptLogEffectsUnavailable: tx.receiptLogEffectsUnavailable
     };
@@ -52,13 +52,13 @@ export class PopulateReceiptTransform extends TransformWithEventPipe {
 
   private applyEnrichment(tx: MongoBound<IEVMTransaction>, enrichment: ReceiptEnrichment) {
     if (enrichment.effects !== undefined) {
-      tx.effects = enrichment.effects;
+      tx.effects = this.cloneEffects(enrichment.effects);
     }
     if (enrichment.fee !== undefined) {
       tx.fee = enrichment.fee;
     }
     if (enrichment.receipt !== undefined) {
-      tx.receipt = enrichment.receipt;
+      tx.receipt = this.cloneReceipt(enrichment.receipt);
     }
     if (enrichment.receiptLogEffectsProcessed !== undefined) {
       tx.receiptLogEffectsProcessed = enrichment.receiptLogEffectsProcessed;
@@ -92,5 +92,13 @@ export class PopulateReceiptTransform extends TransformWithEventPipe {
         this.failedTxs.delete(oldestTxid);
       }
     }
+  }
+
+  private cloneEffects(effects?: IEVMTransaction['effects']) {
+    return effects?.map(effect => ({ ...effect }));
+  }
+
+  private cloneReceipt(receipt?: IEVMTransaction['receipt']) {
+    return receipt ? { ...(receipt as any) } : receipt;
   }
 }
