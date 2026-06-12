@@ -64,6 +64,9 @@ export class InternalTxRelatedFilterTransform extends TransformWithEventPipe {
 
     // Discard original tx if original value is 0 - perhaps after refunds
     if (internalTxsToProcess.length === 0 || tx.value != 0) {
+      if (internalTxsToProcess.length) {
+        tx.effects = tx.effects?.filter(effect => !internalTxsToProcess.includes(effect));
+      }
       this.push(tx);
     }
 

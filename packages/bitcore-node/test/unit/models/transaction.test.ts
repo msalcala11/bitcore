@@ -612,6 +612,53 @@ describe('Transaction Model', function() {
         expect(rows.map(row => row.callStack)).to.deep.equal(['1', '2']);
       });
 
+      it('should not overcount root native receives with internal native receives', async () => {
+        const walletAddress = Web3.utils.toChecksumAddress('0xa91cfe0dcad33f36f3c9428d48eccbd8a71951b4');
+        const senderAddress = Web3.utils.toChecksumAddress('0x963737c550e70ffe4d59464542a28604edb2ef9a');
+        const firstCounterpartyAddress = Web3.utils.toChecksumAddress('0x8489935991b0eac9ce9e9330d35b9734ecdf2cad');
+        const secondCounterpartyAddress = Web3.utils.toChecksumAddress('0xa81011ae274ef6debd3bdab634102c7b6c2c452d');
+        const rows = await collectInternalNativeHistoryRows([walletAddress], [{
+          _id: new ObjectId(),
+          txid: '0xroot-and-internal-batch',
+          chain: 'ETH',
+          network: 'mainnet',
+          blockHeight: 15950646,
+          blockTimeNormalized: new Date('2022-11-12T01:26:59.000Z'),
+          from: senderAddress,
+          to: walletAddress,
+          value: 500,
+          fee: 622112000000000,
+          gasPrice: 16000000000,
+          gasLimit: 160000,
+          nonce: 5,
+          transactionIndex: 0,
+          data: Buffer.from(''),
+          internal: [],
+          calls: [],
+          receipt: { status: true },
+          effects: [{
+            to: walletAddress,
+            from: senderAddress,
+            amount: '500',
+            callStack: '0'
+          }, {
+            to: walletAddress,
+            from: firstCounterpartyAddress,
+            amount: '100',
+            callStack: '1'
+          }, {
+            to: walletAddress,
+            from: secondCounterpartyAddress,
+            amount: '200',
+            callStack: '2'
+          }]
+        }]);
+
+        expect(rows.map(row => row.category)).to.deep.equal(['receive', 'receive', 'receive']);
+        expect(rows.map(row => row.satoshis)).to.deep.equal(['100', '200', '500']);
+        expect(rows.map(row => row.callStack)).to.deep.equal(['1', '2', undefined]);
+      });
+
       it('should not emit Gnosis token history rows for failed ERC20 sends', async () => {
         const { rows } = await collectGnosisTokenHistoryRows(gnosisTokenTx({
           receipt: { status: false }
