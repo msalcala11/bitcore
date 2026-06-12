@@ -453,7 +453,7 @@ export class EVMTransactionModel extends BaseTransaction<IEVMTransaction> {
         }
       }
       this.addReceiptLogEffects(tx, effects);
-      if (tx.receipt) {
+      if (Array.isArray(tx.receipt?.logs)) {
         tx.receiptLogEffectsProcessed = true;
       }
     } catch (err) {

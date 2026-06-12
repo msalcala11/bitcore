@@ -173,43 +173,92 @@ async function getReceiptWithRetry(
 
 function setReceiptAndFee(tx: IEVMTransactionInProcess, receipt: any) {
   tx.receipt = normalizeReceipt(receipt) as unknown as TxReceipt;
-  const gasUsed = toBigInt(receipt.gasUsed ?? tx.receipt.gasUsed);
-  const gasPrice = toBigInt(receipt.effectiveGasPrice ?? (tx.receipt as any).effectiveGasPrice ?? tx.gasPrice);
+  const gasUsed = toBigInt(tx.receipt.gasUsed);
+  const gasPrice = toBigInt((tx.receipt as any).effectiveGasPrice ?? tx.gasPrice);
   if (gasUsed !== undefined && gasPrice !== undefined && gasUsed >= 0n && gasPrice >= 0n) {
     tx.fee = Number(gasUsed * gasPrice);
   }
 }
 
-function normalizeReceipt(receipt: any) {
-  const normalized = Utils.BI.scrubBigIntsInObject(receipt);
-  normalized.status = normalizeReceiptStatus(normalized.status);
-  for (const field of ['transactionIndex', 'blockNumber', 'cumulativeGasUsed', 'gasUsed', 'effectiveGasPrice']) {
-    normalized[field] = normalizeNumber(normalized[field]);
+export function normalizeReceipt(receipt: any) {
+  if (!receipt) {
+    return receipt;
   }
-  if (normalized.logs?.length) {
-    for (const log of normalized.logs) {
-      log.logIndex = normalizeNumber(log.logIndex);
-      log.transactionIndex = normalizeNumber(log.transactionIndex);
-      log.blockNumber = normalizeNumber(log.blockNumber);
+  const normalized = Utils.BI.scrubBigIntsInObject(receipt);
+  const compactReceipt = copyDefinedFields(normalized, [
+    'status',
+    'transactionHash',
+    'transactionIndex',
+    'blockHash',
+    'blockNumber',
+    'contractAddress',
+    'cumulativeGasUsed',
+    'gasUsed',
+    'effectiveGasPrice'
+  ]);
+  if (compactReceipt.status !== undefined) {
+    compactReceipt.status = normalizeReceiptStatus(compactReceipt.status);
+  }
+  for (const field of ['transactionIndex', 'blockNumber', 'cumulativeGasUsed', 'gasUsed', 'effectiveGasPrice']) {
+    if (compactReceipt[field] !== undefined) {
+      compactReceipt[field] = normalizeNumber(compactReceipt[field]);
     }
   }
-  return normalized;
+  if (Array.isArray(normalized.logs)) {
+    compactReceipt.logs = normalized.logs.map(log => {
+      const compactLog = copyDefinedFields(log, [
+        'address',
+        'topics',
+        'data',
+        'logIndex',
+        'transactionIndex',
+        'transactionHash',
+        'blockHash',
+        'blockNumber'
+      ]);
+      for (const field of ['logIndex', 'transactionIndex', 'blockNumber']) {
+        if (compactLog[field] !== undefined) {
+          compactLog[field] = normalizeNumber(compactLog[field]);
+        }
+      }
+      return compactLog;
+    });
+  }
+  return compactReceipt;
+}
+
+function copyDefinedFields(source: any, fields: string[]) {
+  const target = {} as any;
+  for (const field of fields) {
+    if (source?.[field] !== undefined) {
+      target[field] = source[field];
+    }
+  }
+  return target;
 }
 
 function normalizeReceiptStatus(status: any) {
   const normalizedStatus = typeof status === 'string' ? status.toLowerCase() : status;
-  if (normalizedStatus === '0x1') {
+  if (normalizedStatus === true || normalizedStatus === 1 || normalizedStatus === 1n || normalizedStatus === '1' || normalizedStatus === '0x1') {
     return true;
   }
-  if (normalizedStatus === '0x0') {
+  if (normalizedStatus === false || normalizedStatus === 0 || normalizedStatus === 0n || normalizedStatus === '0' || normalizedStatus === '0x0') {
     return false;
   }
   return status;
 }
 
 function normalizeNumber(value: any) {
-  if (typeof value === 'string' && value.startsWith('0x')) {
-    return Number(BigInt(value));
+  if (typeof value === 'bigint') {
+    return Number(value);
+  }
+  if (typeof value === 'string') {
+    if (value.startsWith('0x')) {
+      return Number(BigInt(value));
+    }
+    if (/^\d+$/.test(value)) {
+      return Number(value);
+    }
   }
   return value;
 }

@@ -12,19 +12,16 @@ const isFailedReceipt = (receipt?: { status?: boolean | number | string | bigint
 
 export class EVMListTransactionsStream extends TransformWithEventPipe {
   private walletAddressSet: Set<string>;
+  private tokenAddressLower?: string;
 
   constructor(walletAddresses: Array<string>, private tokenAddress?: string) {
     super({ objectMode: true });
     this.walletAddressSet = new Set(walletAddresses.map(address => address.toLowerCase()));
-  }
-
-  private isWalletAddress(address?: string) {
-    return !!address && this.walletAddressSet.has(address.toLowerCase());
+    this.tokenAddressLower = tokenAddress?.toLowerCase();
   }
 
   async _transform(transaction: MongoBound<IEVMTransactionTransformed>, _, done) {
-    const tokenAddressLower = this.tokenAddress?.toLowerCase();
-    if (tokenAddressLower && isFailedReceipt(transaction.receipt)) {
+    if (this.tokenAddress && isFailedReceipt(transaction.receipt)) {
       return done();
     }
 
@@ -58,10 +55,14 @@ export class EVMListTransactionsStream extends TransformWithEventPipe {
     }
 
     const matchingReceiveEffects = (transaction.effects || []).filter(effect =>
-      this.isWalletAddress(effect.to) && effect.contractAddress?.toLowerCase() == tokenAddressLower
+      this.isWalletAddress(effect.to) &&
+      this.matchesTokenAddress(effect.contractAddress) &&
+      !this.isWalletMoveEffect(effect)
     );
     const matchingSendEffects = (transaction.effects || []).filter(effect =>
-      this.isWalletAddress(effect.from) && effect.contractAddress?.toLowerCase() == tokenAddressLower
+      this.isWalletAddress(effect.from) &&
+      this.matchesTokenAddress(effect.contractAddress) &&
+      !this.isWalletMoveEffect(effect)
     );
 
     const sending = this.isWalletAddress(transaction.from);
@@ -101,6 +102,21 @@ export class EVMListTransactionsStream extends TransformWithEventPipe {
       }
     }
     return done();
+  }
+
+  private isWalletMoveEffect(effect: { from?: string; to?: string }) {
+    return this.isWalletAddress(effect.from) && this.isWalletAddress(effect.to);
+  }
+
+  private isWalletAddress(address?: string) {
+    return !!address && this.walletAddressSet.has(address.toLowerCase());
+  }
+
+  private matchesTokenAddress(contractAddress?: string) {
+    if (!this.tokenAddressLower) {
+      return !contractAddress;
+    }
+    return contractAddress?.toLowerCase() === this.tokenAddressLower;
   }
 }
 

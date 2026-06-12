@@ -188,6 +188,8 @@ describe('P2P Service', function() {
       cumulativeGasUsed: '0x1',
       gasUsed: '0xa',
       effectiveGasPrice: '0x14',
+      logsBloom: '0x'.padEnd(514, '0'),
+      type: '0x2',
       logs: []
     }));
     const request = sandbox.stub().resolves(receipts);
@@ -206,6 +208,9 @@ describe('P2P Service', function() {
     expect(txs.map(tx => tx.receipt.transactionHash)).to.deep.equal(['0x0', '0x1', '0x2']);
     expect(txs.map(tx => tx.receipt.status)).to.deep.equal([true, true, true]);
     expect(txs.map(tx => tx.receipt.gasUsed)).to.deep.equal([10, 10, 10]);
+    expect((txs[0].receipt as any).effectiveGasPrice).to.equal(20);
+    expect((txs[0].receipt as any).logsBloom).to.equal(undefined);
+    expect((txs[0].receipt as any).type).to.equal(undefined);
     expect(txs.map(tx => tx.fee)).to.deep.equal([200, 200, 200]);
   });
 
