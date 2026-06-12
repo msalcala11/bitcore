@@ -550,7 +550,35 @@ describe('Transaction Model', function() {
         expect(rows[0].satoshis).to.equal('500');
       });
 
-      it('should dedupe external token rows by txid before receipt enrichment', async () => {
+      it('should dedupe external token rows by txid after receipt enrichment', async () => {
+        const walletAddress = Web3.utils.toChecksumAddress('0xa91cfe0dcad33f36f3c9428d48eccbd8a71951b4');
+        const counterpartyAddress = Web3.utils.toChecksumAddress('0x8489935991b0eac9ce9e9330d35b9734ecdf2cad');
+        const effect = {
+          to: counterpartyAddress,
+          from: walletAddress,
+          amount: '100',
+          type: 'ERC20:transfer',
+          contractAddress: busdToken,
+          callStack: 'log:7'
+        };
+        const rows = new Array<any>();
+        const stream = new TxidDedupeTransform([walletAddress]);
+        const done = new Promise<void>((resolve, reject) => {
+          stream
+            .on('data', tx => rows.push(tx))
+            .on('error', reject)
+            .on('end', resolve);
+        });
+        stream.write({ txid: '0xbatch', from: walletAddress, to: counterpartyAddress, value: '100', effects: [effect], receiptLogEffectsProcessed: true });
+        stream.write({ txid: '0xbatch', from: walletAddress, to: counterpartyAddress, value: '200', effects: [effect], receiptLogEffectsProcessed: true });
+        stream.write({ txid: '0xbatch', from: counterpartyAddress, to: walletAddress, value: '5', effects: [{ ...effect, from: counterpartyAddress, to: walletAddress }], receiptLogEffectsProcessed: true });
+        stream.end();
+        await done;
+
+        expect(rows.map(row => row.value)).to.deep.equal(['100', '5']);
+      });
+
+      it('should not dedupe external token rows when receipt enrichment failed', async () => {
         const walletAddress = Web3.utils.toChecksumAddress('0xa91cfe0dcad33f36f3c9428d48eccbd8a71951b4');
         const counterpartyAddress = Web3.utils.toChecksumAddress('0x8489935991b0eac9ce9e9330d35b9734ecdf2cad');
         const rows = new Array<any>();
@@ -561,13 +589,12 @@ describe('Transaction Model', function() {
             .on('error', reject)
             .on('end', resolve);
         });
-        stream.write({ txid: '0xbatch', from: walletAddress, to: counterpartyAddress, value: '100' });
-        stream.write({ txid: '0xbatch', from: walletAddress, to: counterpartyAddress, value: '200' });
-        stream.write({ txid: '0xbatch', from: counterpartyAddress, to: walletAddress, value: '5' });
+        stream.write({ txid: '0xbatch', from: walletAddress, to: counterpartyAddress, value: '100', effects: [] });
+        stream.write({ txid: '0xbatch', from: walletAddress, to: counterpartyAddress, value: '200', effects: [] });
         stream.end();
         await done;
 
-        expect(rows.map(row => row.value)).to.deep.equal(['100', '5']);
+        expect(rows.map(row => row.value)).to.deep.equal(['100', '200']);
       });
 
       it('should not overcount batched native internal receives', async () => {
@@ -674,7 +701,7 @@ describe('Transaction Model', function() {
 
         expect(rows).to.have.length(1);
         expect(rows[0].category).to.equal('send');
-        expect(rows[0].satoshis).to.equal(-100);
+        expect(rows[0].satoshis).to.equal('-100');
       });
 
       it('should emit one Gnosis token history row for successful ERC20 receives', async () => {

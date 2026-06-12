@@ -507,7 +507,7 @@ export class BaseEVMStateProvider extends InternalStateProvider implements IChai
       shouldUpdate = true;
     }
 
-    if (shouldUpdate) {
+    if (shouldUpdate && tx._id) {
       await EVMTransactionStorage.collection.updateOne({ _id: tx._id }, { $set: update });
     }
     return tx;
