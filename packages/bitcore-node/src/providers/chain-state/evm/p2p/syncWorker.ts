@@ -6,7 +6,7 @@ import { Storage } from '../../../../services/storage';
 import { wait } from '../../../../utils';
 import { EVMBlockStorage } from '../models/block';
 import { EVMTransactionStorage } from '../models/transaction';
-import { addReceiptsToTxs } from './receipts';
+import { addReceiptsToTxs, getReceiptFetchConcurrency } from './receipts';
 import { type IRpc, Rpcs } from './rpcs';
 import type { IEVMBlock, IEVMTransactionInProcess } from '../types';
 import type { Web3, Web3Types } from '@bitpay-labs/crypto-wallet-core';
@@ -20,6 +20,7 @@ export class SyncWorker {
   private web3?: Web3;
   private rpc?: IRpc;
   private client?: 'erigon' | 'geth';
+  private receiptFetchWorkerCount: number = worker.workerData.receiptFetchWorkerCount || 1;
   private stopping: boolean = false;
   private isWorking: boolean = false;
 
@@ -174,7 +175,7 @@ export class SyncWorker {
 
   async addReceiptsToTxs(txs: IEVMTransactionInProcess[]) {
     await addReceiptsToTxs(this.web3!, txs, {
-      concurrency: this.chainConfig.receiptFetchConcurrency,
+      concurrency: getReceiptFetchConcurrency(this.chainConfig.receiptFetchConcurrency, this.receiptFetchWorkerCount),
       retries: this.chainConfig.receiptFetchRetries,
       retryDelayMs: this.chainConfig.receiptFetchRetryDelayMs
     });
