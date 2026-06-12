@@ -381,7 +381,11 @@ export class EVMP2pWorker extends BaseP2PWorker<IEVMBlock> {
   }
 
   async addReceiptsToTxs(txs: IEVMTransactionInProcess[]) {
-    await addReceiptsToTxs(this.web3!, txs);
+    await addReceiptsToTxs(this.web3!, txs, {
+      concurrency: this.chainConfig.receiptFetchConcurrency,
+      retries: this.chainConfig.receiptFetchRetries,
+      retryDelayMs: this.chainConfig.receiptFetchRetryDelayMs
+    });
   }
 
   async stop() {

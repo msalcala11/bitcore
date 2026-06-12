@@ -173,7 +173,11 @@ export class SyncWorker {
   }
 
   async addReceiptsToTxs(txs: IEVMTransactionInProcess[]) {
-    await addReceiptsToTxs(this.web3!, txs);
+    await addReceiptsToTxs(this.web3!, txs, {
+      concurrency: this.chainConfig.receiptFetchConcurrency,
+      retries: this.chainConfig.receiptFetchRetries,
+      retryDelayMs: this.chainConfig.receiptFetchRetryDelayMs
+    });
   }
 
 }
