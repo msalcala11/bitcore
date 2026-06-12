@@ -3945,16 +3945,46 @@ export class WalletService implements IWalletService {
             (txSatoshis === effectAmount || txSatoshis === -effectAmount);
         }
 
+        function satoshisMatchesEffectTotal(tx, effects, contractAddress) {
+          const contractAddressLower = contractAddress?.toLowerCase();
+          const totalEffects = effects.filter(e =>
+            e.type == 'ERC20:transfer' &&
+            typeof e.callStack == 'string' &&
+            e.callStack.startsWith('log:') &&
+            e.contractAddress?.toLowerCase() == contractAddressLower
+          );
+          if (!totalEffects.length) return false;
+          try {
+            const txSatoshis = BigInt(tx.satoshis);
+            const absoluteTxSatoshis = txSatoshis < 0n ? -txSatoshis : txSatoshis;
+            const total = totalEffects.reduce((sum, effect) => sum + BigInt(effect.amount || 0), 0n);
+            if (total > 0n && absoluteTxSatoshis === total) return true;
+          } catch {
+            // Fall through to rounded-number comparison for JS number values.
+          }
+          const txSatoshis = Math.abs(Number(tx.satoshis));
+          const total = totalEffects.reduce((sum, effect) => sum + Number(effect.amount || 0), 0);
+          return total > 0 && Number.isFinite(txSatoshis) && Number.isFinite(total) && txSatoshis === total;
+        }
+
         function recreateAbiType(tx) {
           // Check if any top-level or receipt-log-derived effects are ERC20 transfers
           const { effects } = tx;
           if (effects && effects.length) {
             const erc20Transfer = effects.find(e => {
               const isReceiptLogEffect = typeof e.callStack == 'string' && e.callStack.startsWith('log:');
+              const txAddress = tx.address?.toLowerCase();
+              const matchesRowAddress = txAddress && (
+                txAddress == e.to?.toLowerCase() ||
+                txAddress == e.from?.toLowerCase()
+              );
               const isTokenHistoryRow = isReceiptLogEffect &&
-                tx.address?.toLowerCase() == e.to?.toLowerCase() &&
-                satoshisMatchesEffect(tx, e);
-              return e.type == 'ERC20:transfer' && (e.callStack == '' || isTokenHistoryRow);
+                matchesRowAddress &&
+                (satoshisMatchesEffect(tx, e) || satoshisMatchesEffectTotal(tx, effects, e.contractAddress));
+              const isDirectTokenCall = isReceiptLogEffect &&
+                txAddress &&
+                txAddress == e.contractAddress?.toLowerCase();
+              return e.type == 'ERC20:transfer' && (e.callStack == '' || isTokenHistoryRow || isDirectTokenCall);
             });
             if (erc20Transfer) {
               // This is the only data used in old wallet and bitpay-app

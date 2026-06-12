@@ -15,7 +15,7 @@ import { Storage } from '../../../../services/storage';
 import { IBlock } from '../../../../types/Block';
 import { ChainId } from '../../../../types/ChainNetwork';
 import { SpentHeightIndicators } from '../../../../types/Coin';
-import { normalizeChainNetwork, partition, range } from '../../../../utils';
+import { normalizeChainNetwork, partition, range, wait } from '../../../../utils';
 import { StatsUtil } from '../../../../utils/stats';
 import { TransformWithEventPipe } from '../../../../utils/streamWithEventPipe';
 import { ExternalApiStream } from '../../external/streams/apiStream';
@@ -55,6 +55,9 @@ import type { EthRpc } from '@bitpay-labs/crypto-rpc/lib/eth/EthRpc';
 import type { ObjectID } from 'mongodb';
 
 export interface GetWeb3Response { rpc: EthRpc; web3: Web3; dataType: string; lastPingTime?: number };
+
+const RECEIPT_LOG_REFETCH_RETRIES = 2;
+const RECEIPT_LOG_REFETCH_RETRY_DELAY_MS = 250;
 
 export interface BuildWalletTxsStreamParams {
   transactionStream: TransformWithEventPipe;
@@ -440,6 +443,20 @@ export class BaseEVMStateProvider extends InternalStateProvider implements IChai
     return normalizeReceipt(receipt);
   }
 
+  async getReceiptWithNullRetry(network: string, txid: string) {
+    for (let attempt = 0; attempt <= RECEIPT_LOG_REFETCH_RETRIES; attempt++) {
+      const receipt = await this.getReceipt(network, txid);
+      if (receipt || attempt === RECEIPT_LOG_REFETCH_RETRIES) {
+        return receipt;
+      }
+      await this.waitForReceiptRetry(RECEIPT_LOG_REFETCH_RETRY_DELAY_MS * Math.pow(2, attempt));
+    }
+  }
+
+  async waitForReceiptRetry(delayMs: number) {
+    await wait(delayMs);
+  }
+
   async populateReceipt(tx: MongoBound<IEVMTransaction>) {
     const update = {} as Partial<IEVMTransaction>;
     let shouldUpdate = false;
@@ -449,7 +466,9 @@ export class BaseEVMStateProvider extends InternalStateProvider implements IChai
       let receipt;
       let receiptFetchErrored = false;
       try {
-        receipt = await this.getReceipt(tx.network, tx.txid);
+        receipt = shouldRefetchForLogEffects
+          ? await this.getReceiptWithNullRetry(tx.network, tx.txid)
+          : await this.getReceipt(tx.network, tx.txid);
       } catch (err) {
         if (!tx.receipt) {
           throw err;
