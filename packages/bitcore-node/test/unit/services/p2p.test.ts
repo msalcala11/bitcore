@@ -195,7 +195,13 @@ describe('P2P Service', function() {
     class MockMultiThreadSync extends MultiThreadSync {
       getWorkerThread(data) {
         workerData.push(data);
-        return Object.assign(new EventEmitter(), { threadId: workerData.length }) as any;
+        const thread = Object.assign(new EventEmitter(), {
+          threadId: workerData.length,
+          postMessage: sandbox.stub().callsFake(() => {
+            setImmediate(() => thread.emit('message', { message: 'ready' }));
+          })
+        });
+        return thread as any;
       }
     }
 
