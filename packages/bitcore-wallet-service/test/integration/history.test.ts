@@ -1019,15 +1019,15 @@ describe('History', function() {
         blockTime: '2022-10-18T21:28:59.000Z',
         category: 'send',
         height: BCHEIGHT,
-        satoshis: 0,
-        address: '0x4Fabb145d64652a948d72533023f6E7A623C7C53',
+        satoshis: -1000,
+        address: '0xa91cFe0DcAd33F36f3c9428D48eCCBD8A71951b4',
         chain: 'ETH',
         network: 'mainnet',
         effects: [{
           type: 'ERC20:transfer',
           to: '0xa91cFe0DcAd33F36f3c9428D48eCCBD8A71951b4',
           from: '0xa81011Ae274eF6deBd3BDaB634102c7b6c2C452D',
-          amount: '114519572370000000000',
+          amount: '1000',
           contractAddress: '0x4Fabb145d64652a948d72533023f6E7A623C7C53',
           callStack: 'log:7'
         }]
@@ -1039,6 +1039,37 @@ describe('History', function() {
         should.exist(txs);
         txs.length.should.equal(1);
         txs[0].abiType.should.deep.equal({ name: 'transfer' });
+        done();
+      });
+    });
+
+    it('should not recreate abiType for native rows with incidental ERC20 effects', function(done) {
+      const txs = [{
+        id: 'native-router-send',
+        txid: '0xbaf62c1c4de9761a421608634a4ad0f7dfbfa3546227c0f4044322bdda095f43',
+        blockTime: '2022-10-18T21:28:59.000Z',
+        category: 'send',
+        height: BCHEIGHT,
+        satoshis: -500,
+        address: '0x1111111111111111111111111111111111111111',
+        chain: 'ETH',
+        network: 'mainnet',
+        effects: [{
+          type: 'ERC20:transfer',
+          to: '0xa91cFe0DcAd33F36f3c9428D48eCCBD8A71951b4',
+          from: '0xa81011Ae274eF6deBd3BDaB634102c7b6c2C452D',
+          amount: '1000',
+          contractAddress: '0x4Fabb145d64652a948d72533023f6E7A623C7C53',
+          callStack: 'log:7'
+        }]
+      }];
+      helpers.stubHistory(null, null, txs);
+
+      server.getTxHistory({}, function(err, txs) {
+        should.not.exist(err);
+        should.exist(txs);
+        txs.length.should.equal(1);
+        should.not.exist(txs[0].abiType);
         done();
       });
     });
@@ -1090,6 +1121,52 @@ describe('History', function() {
         txs[0].amount.should.equal(3000);
         txs[0].outputs.length.should.equal(2);
         txs[0].effects.map(effect => effect.callStack).should.deep.equal(['log:7', 'log:8']);
+        done();
+      });
+    });
+
+    it('should dedupe effects when merging duplicate native receive rows', function(done) {
+      const effects = [{
+        to: '0xa91cFe0DcAd33F36f3c9428D48eCCBD8A71951b4',
+        from: '0x8489935991b0EAC9ce9e9330D35b9734EcDF2CAd',
+        amount: '1000',
+        callStack: '0'
+      }, {
+        to: '0xa91cFe0DcAd33F36f3c9428D48eCCBD8A71951b4',
+        from: '0xa81011Ae274eF6deBd3BDaB634102c7b6c2C452D',
+        amount: '2000',
+        callStack: '1'
+      }];
+      const txs = [{
+        id: 'native-receive-1',
+        txid: '0xbaf62c1c4de9761a421608634a4ad0f7dfbfa3546227c0f4044322bdda095f43',
+        blockTime: '2022-10-18T21:28:59.000Z',
+        category: 'receive',
+        height: BCHEIGHT,
+        satoshis: 1000,
+        address: '0xa91cFe0DcAd33F36f3c9428D48eCCBD8A71951b4',
+        chain: 'ETH',
+        network: 'mainnet',
+        effects
+      }, {
+        id: 'native-receive-2',
+        txid: '0xbaf62c1c4de9761a421608634a4ad0f7dfbfa3546227c0f4044322bdda095f43',
+        blockTime: '2022-10-18T21:28:59.000Z',
+        category: 'receive',
+        height: BCHEIGHT,
+        satoshis: 2000,
+        address: '0xa91cFe0DcAd33F36f3c9428D48eCCBD8A71951b4',
+        chain: 'ETH',
+        network: 'mainnet',
+        effects
+      }];
+      helpers.stubHistory(null, null, txs);
+
+      server.getTxHistory({}, function(err, txs) {
+        should.not.exist(err);
+        should.exist(txs);
+        txs.length.should.equal(1);
+        txs[0].effects.should.deep.equal(effects);
         done();
       });
     });

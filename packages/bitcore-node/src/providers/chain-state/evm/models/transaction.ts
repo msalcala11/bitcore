@@ -500,7 +500,8 @@ export class EVMTransactionModel extends BaseTransaction<IEVMTransaction> {
     }
     const from = this._addressFromTopic(topics[1]);
     const to = this._addressFromTopic(topics[2]);
-    if (!from || !to || !log.address) {
+    const contractAddress = this._hexString(log.address);
+    if (!from || !to || !/^0x[0-9a-fA-F]{40}$/.test(contractAddress)) {
       return;
     }
     const logIndex = log.logIndex ?? index;
@@ -509,7 +510,7 @@ export class EVMTransactionModel extends BaseTransaction<IEVMTransaction> {
       to: Web3.utils.toChecksumAddress(to),
       from: Web3.utils.toChecksumAddress(from),
       amount: BigInt(data).toString(),
-      contractAddress: Web3.utils.toChecksumAddress(log.address),
+      contractAddress: Web3.utils.toChecksumAddress(contractAddress),
       callStack: `log:${Number(logIndex)}`
     };
   }

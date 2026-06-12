@@ -3824,9 +3824,17 @@ export class WalletService implements IWalletService {
     const seenReceive = {};
 
     const moves: { [txid: string]: ITxProposal } = {};
+    const effectKey = effect => [
+      effect.type,
+      effect.callStack,
+      effect.to,
+      effect.from,
+      effect.amount,
+      effect.contractAddress
+    ].join('|');
     const mergeEffects = (target, source) => {
       if (source.effects?.length) {
-        target.effects = (target.effects || []).concat(source.effects);
+        target.effects = _.uniqBy((target.effects || []).concat(source.effects), effectKey);
       }
     };
     // remove 'fees' and 'moves' (probably change addresses)
@@ -3922,12 +3930,24 @@ export class WalletService implements IWalletService {
 
         // This adapter rebuilds the abiType property from data contained in the effects so that it returns what wallet is used to
         // If we remove the slight reliance in the wallet on abiType then we can remove this adapter
-        function recreateAbiType(effects) {
+        function satoshisMatchesEffect(tx, effect) {
+          try {
+            return BigInt(tx.satoshis) === BigInt(effect.amount) || BigInt(tx.satoshis) === -BigInt(effect.amount);
+          } catch {
+            return false;
+          }
+        }
+
+        function recreateAbiType(tx) {
           // Check if any top-level or receipt-log-derived effects are ERC20 transfers
+          const { effects } = tx;
           if (effects && effects.length) {
             const erc20Transfer = effects.find(e => {
               const isReceiptLogEffect = typeof e.callStack == 'string' && e.callStack.startsWith('log:');
-              return e.type == 'ERC20:transfer' && (e.callStack == '' || isReceiptLogEffect);
+              const isTokenHistoryRow = isReceiptLogEffect &&
+                tx.address?.toLowerCase() == e.to?.toLowerCase() &&
+                satoshisMatchesEffect(tx, e);
+              return e.type == 'ERC20:transfer' && (e.callStack == '' || isTokenHistoryRow);
             });
             if (erc20Transfer) {
               // This is the only data used in old wallet and bitpay-app
@@ -3955,7 +3975,7 @@ export class WalletService implements IWalletService {
           network: tx.network,
           chain: tx.chain,
           data: tx.data,
-          abiType: tx.abiType || recreateAbiType(tx.effects),
+          abiType: tx.abiType || recreateAbiType(tx),
           gasPrice: tx.gasPrice,
           maxGasFee: tx.maxGasFee,
           priorityGasFee: tx.priorityGasFee,
