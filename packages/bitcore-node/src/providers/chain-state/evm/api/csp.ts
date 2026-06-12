@@ -529,7 +529,9 @@ export class BaseEVMStateProvider extends InternalStateProvider implements IChai
   }
 
   populateEffects(tx: MongoBound<IEVMTransaction>) {
-    if (!tx.effects || (tx.effects && tx.effects.length == 0)) {
+    if (tx.receiptLogEffectsProcessed && !tx.effects) {
+      tx.effects = [];
+    } else if (!tx.effects || (tx.effects.length === 0 && !tx.receiptLogEffectsProcessed)) {
       tx.effects = EVMTransactionStorage.getEffects(tx as IEVMTransactionInProcess);
     }
     return tx;
