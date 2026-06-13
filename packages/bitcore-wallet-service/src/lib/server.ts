@@ -3955,9 +3955,16 @@ export class WalletService implements IWalletService {
         // This adapter rebuilds the abiType property from data contained in the effects so that it returns what wallet is used to
         // If we remove the slight reliance in the wallet on abiType then we can remove this adapter
         function satoshisMatchesEffect(tx, effect) {
+          let txSatoshisBigInt;
+          let effectAmountBigInt;
           try {
-            if (BigInt(tx.satoshis) === BigInt(effect.amount) || BigInt(tx.satoshis) === -BigInt(effect.amount)) {
+            txSatoshisBigInt = BigInt(tx.satoshis);
+            effectAmountBigInt = BigInt(effect.amount);
+            if (txSatoshisBigInt === effectAmountBigInt || txSatoshisBigInt === -effectAmountBigInt) {
               return true;
+            }
+            if (typeof tx.satoshis !== 'number' || Number.isSafeInteger(tx.satoshis)) {
+              return false;
             }
           } catch {
             // Fall through to rounded-number comparison for JS number values.
@@ -3978,11 +3985,16 @@ export class WalletService implements IWalletService {
             e.contractAddress?.toLowerCase() == contractAddressLower
           );
           if (!totalEffects.length) return false;
+          let txSatoshisBigInt;
+          let totalBigInt;
           try {
-            const txSatoshis = BigInt(tx.satoshis);
-            const absoluteTxSatoshis = txSatoshis < 0n ? -txSatoshis : txSatoshis;
-            const total = totalEffects.reduce((sum, effect) => sum + BigInt(effect.amount || 0), 0n);
-            if (total > 0n && absoluteTxSatoshis === total) return true;
+            txSatoshisBigInt = BigInt(tx.satoshis);
+            const absoluteTxSatoshis = txSatoshisBigInt < 0n ? -txSatoshisBigInt : txSatoshisBigInt;
+            totalBigInt = totalEffects.reduce((sum, effect) => sum + BigInt(effect.amount || 0), 0n);
+            if (totalBigInt > 0n && absoluteTxSatoshis === totalBigInt) return true;
+            if (typeof tx.satoshis !== 'number' || Number.isSafeInteger(tx.satoshis)) {
+              return false;
+            }
           } catch {
             // Fall through to rounded-number comparison for JS number values.
           }
