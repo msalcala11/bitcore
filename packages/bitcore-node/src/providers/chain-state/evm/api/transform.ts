@@ -3,12 +3,8 @@ import { Config } from '../../../../services/config';
 import { IEVMNetworkConfig } from '../../../../types/Config';
 import { jsonStringify } from '../../../../utils';
 import { TransformWithEventPipe } from '../../../../utils/streamWithEventPipe';
+import { EVMTransactionStorage } from '../models/transaction';
 import { IEVMTransactionTransformed } from '../types';
-
-const isFailedReceipt = (receipt?: { status?: boolean | number | string | bigint }) => {
-  const status = receipt?.status;
-  return status === false || status === 0 || status === 0n || status === '0' || status === '0x0';
-};
 
 export class EVMListTransactionsStream extends TransformWithEventPipe {
   private walletAddressSet: Set<string>;
@@ -21,7 +17,7 @@ export class EVMListTransactionsStream extends TransformWithEventPipe {
   }
 
   async _transform(transaction: MongoBound<IEVMTransactionTransformed>, _, done) {
-    if (this.tokenAddress && isFailedReceipt(transaction.receipt)) {
+    if (this.tokenAddress && EVMTransactionStorage.isFailedReceipt(transaction.receipt)) {
       return done();
     }
 
@@ -79,13 +75,13 @@ export class EVMListTransactionsStream extends TransformWithEventPipe {
         baseTx.category = 'send';
         baseTx.satoshis = this.tokenAddress && matchingSendEffects.length
           ? -matchingSendEffects.reduce((amount, effect) => amount + BigInt(effect.amount || 0), 0n)
-          : -transaction.value;
+          : -BigInt(transaction.value || 0);
         this.push(
           jsonStringify(baseTx) + '\n'
         );
       } else {
         baseTx.category = 'move';
-        baseTx.satoshis = transaction.value;
+        baseTx.satoshis = BigInt(transaction.value || 0);
         this.push(
           jsonStringify(baseTx) + '\n'
         );
@@ -101,11 +97,29 @@ export class EVMListTransactionsStream extends TransformWithEventPipe {
         this.push(
           jsonStringify(baseTx) + '\n'
         );
-      } else if (weReceived) {
-        baseTx.satoshis = BigInt(transaction.value || 0);
-        this.push(
-          jsonStringify(baseTx) + '\n'
+      } else {
+        // Same-address self-transfers initiated by a third party (relayer, AA bundler)
+        // are 'move' rows; sender-initiated ones land in the move branch above because
+        // token pipelines rewrite to/from to the transfer endpoints. Transfers between
+        // two DIFFERENT addresses of one query's address set intentionally emit nothing:
+        // EVM wallets are queried per address, so each leg is served by its own query.
+        const selfTransferEffects = (transaction.effects || []).filter(effect =>
+          this.isWalletAddress(effect.to) &&
+          effect.from?.toLowerCase() === effect.to?.toLowerCase() &&
+          this.matchesTokenAddress(effect.contractAddress)
         );
+        if (selfTransferEffects.length) {
+          baseTx.category = 'move';
+          baseTx.satoshis = selfTransferEffects.reduce((amount, effect) => amount + BigInt(effect.amount || 0), 0n);
+          this.push(
+            jsonStringify(baseTx) + '\n'
+          );
+        } else if (weReceived) {
+          baseTx.satoshis = BigInt(transaction.value || 0);
+          this.push(
+            jsonStringify(baseTx) + '\n'
+          );
+        }
       }
     }
     return done();
@@ -146,11 +160,12 @@ export class EVMListTransactionsStream extends TransformWithEventPipe {
 }
 
 export class TxidDedupeTransform extends TransformWithEventPipe {
+  // Exact per-request dedupe: bounded by the rows one request streams. A capped window
+  // here would let duplicates through for wallets with more rows than the cap.
   private seenKeys = new Set<string>();
-  private keyOrder = new Array<string>();
   private walletAddressSet: Set<string>;
 
-  constructor(walletAddresses: Array<string> = [], private maxSeenKeys = 10_000) {
+  constructor(walletAddresses: Array<string> = []) {
     super({ objectMode: true });
     this.walletAddressSet = new Set(walletAddresses.map(address => address.toLowerCase()));
   }
@@ -163,23 +178,12 @@ export class TxidDedupeTransform extends TransformWithEventPipe {
       if (this.seenKeys.has(key)) {
         return done();
       }
-      this.rememberKey(key);
+      this.seenKeys.add(key);
       this.push(transaction);
     } else {
       this.push(transaction);
     }
     return done();
-  }
-
-  private rememberKey(key: string) {
-    this.seenKeys.add(key);
-    this.keyOrder.push(key);
-    if (this.keyOrder.length > this.maxSeenKeys) {
-      const oldestKey = this.keyOrder.shift();
-      if (oldestKey) {
-        this.seenKeys.delete(oldestKey);
-      }
-    }
   }
 
   private getDirection(transaction: MongoBound<IEVMTransactionTransformed>) {

@@ -467,15 +467,23 @@ export class EVMTransactionModel extends BaseTransaction<IEVMTransaction> {
       return;
     }
     const logEffects: Effect[] = [];
+    const unparseableContracts = new Set<string>();
     for (const [index, log] of tx.receipt.logs.entries()) {
-      const effect = this._getEffectForErc20TransferLog(log, index);
+      const { effect, unparseableContract } = this._parseErc20TransferLog(log, index);
       if (effect) {
         logEffects.push(effect);
+      } else if (unparseableContract) {
+        unparseableContracts.add(unparseableContract);
       }
     }
 
+    // Receipt logs are authoritative for ERC20 transfers, so trace/abi-derived transfer
+    // effects are replaced with log-derived ones — except for contracts that emitted a
+    // Transfer we can't parse (non-canonical events, e.g. non-indexed params), where the
+    // trace effect is the only signal available.
     const filteredEffects = effects.filter(effect => {
-      return !this._isErc20TransferEffect(effect);
+      return !this._isErc20TransferEffect(effect) ||
+        unparseableContracts.has(effect.contractAddress!.toLowerCase());
     });
     effects.splice(0, effects.length, ...filteredEffects, ...logEffects);
   }
@@ -524,32 +532,44 @@ export class EVMTransactionModel extends BaseTransaction<IEVMTransaction> {
   }
 
   _getEffectForErc20TransferLog(log: any, index: number): Effect | undefined {
+    return this._parseErc20TransferLog(log, index).effect;
+  }
+
+  _parseErc20TransferLog(log: any, index: number): { effect?: Effect; unparseableContract?: string } {
     const topics = log?.topics || log?.raw?.topics;
     const data = log?.data || log?.raw?.data;
-    if (!Array.isArray(topics) || topics.length !== 3 || this._hexString(topics[0]).toLowerCase() !== ERC20_TRANSFER_TOPIC) {
-      return;
+    if (!Array.isArray(topics) || !topics.length || this._hexString(topics[0]).toLowerCase() !== ERC20_TRANSFER_TOPIC) {
+      return {};
     }
-    if (typeof data !== 'string' || !/^0x[0-9a-fA-F]{64}$/.test(data)) {
-      return;
+    // Four topics with the Transfer signature is an ERC721 transfer, not an ERC20 one.
+    if (topics.length > 3) {
+      return {};
+    }
+    const contractAddress = this._hexString(log.address);
+    const unparseableContract = /^0x[0-9a-fA-F]{40}$/.test(contractAddress) ? contractAddress.toLowerCase() : undefined;
+    if (topics.length !== 3 || typeof data !== 'string' || !/^0x[0-9a-fA-F]{64}$/.test(data)) {
+      return { unparseableContract };
     }
     const from = this._addressFromTopic(topics[1]);
     const to = this._addressFromTopic(topics[2]);
-    const contractAddress = this._hexString(log.address);
-    if (!from || !to || !/^0x[0-9a-fA-F]{40}$/.test(contractAddress)) {
-      return;
+    if (!from || !to || !unparseableContract) {
+      return { unparseableContract };
     }
     const amount = BigInt(data);
     if (amount === 0n) {
-      return;
+      // Not unparseable: a zero-amount transfer is intentionally excluded from effects.
+      return {};
     }
     const logIndex = log.logIndex ?? index;
     return {
-      type: 'ERC20:transfer',
-      to: Web3.utils.toChecksumAddress(to),
-      from: Web3.utils.toChecksumAddress(from),
-      amount: amount.toString(),
-      contractAddress: Web3.utils.toChecksumAddress(contractAddress),
-      callStack: `log:${Number(logIndex)}`
+      effect: {
+        type: 'ERC20:transfer',
+        to: Web3.utils.toChecksumAddress(to),
+        from: Web3.utils.toChecksumAddress(from),
+        amount: amount.toString(),
+        contractAddress: Web3.utils.toChecksumAddress(contractAddress),
+        callStack: `log:${Number(logIndex)}`
+      }
     };
   }
 

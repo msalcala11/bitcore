@@ -19,7 +19,8 @@ export class Erc20RelatedFilterTransform extends TransformWithEventPipe {
       // Create a tx object for each erc20 transfer
       for (const internalTx of tokenRelatedInternalTxs) {
         const _tx: IEVMTransactionTransformed = Object.assign({}, tx);
-        _tx.value = Number(internalTx.amount);
+        // Keep the exact string amount; Number() loses precision above 2^53.
+        _tx.value = internalTx.amount;
         _tx.to = internalTx.to;
         _tx.from = internalTx.from;
         _tx.effects = [internalTx];
