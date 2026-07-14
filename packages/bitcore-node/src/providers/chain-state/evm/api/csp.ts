@@ -15,7 +15,7 @@ import { Storage } from '../../../../services/storage';
 import { IBlock } from '../../../../types/Block';
 import { ChainId } from '../../../../types/ChainNetwork';
 import { SpentHeightIndicators } from '../../../../types/Coin';
-import { normalizeChainNetwork, partition, range, wait } from '../../../../utils';
+import { normalizeChainNetwork, partition, range } from '../../../../utils';
 import { StatsUtil } from '../../../../utils/stats';
 import { TransformWithEventPipe } from '../../../../utils/streamWithEventPipe';
 import { ExternalApiStream } from '../../external/streams/apiStream';
@@ -55,9 +55,6 @@ import type { EthRpc } from '@bitpay-labs/crypto-rpc/lib/eth/EthRpc';
 import type { ObjectID } from 'mongodb';
 
 export interface GetWeb3Response { rpc: EthRpc; web3: Web3; dataType: string; lastPingTime?: number };
-
-const RECEIPT_LOG_REFETCH_RETRIES = 2;
-const RECEIPT_LOG_REFETCH_RETRY_DELAY_MS = 250;
 
 export interface BuildWalletTxsStreamParams {
   transactionStream: TransformWithEventPipe;
@@ -443,114 +440,48 @@ export class BaseEVMStateProvider extends InternalStateProvider implements IChai
     return normalizeReceipt(receipt);
   }
 
-  async getReceiptWithNullRetry(network: string, txid: string) {
-    for (let attempt = 0; attempt <= RECEIPT_LOG_REFETCH_RETRIES; attempt++) {
-      const receipt = await this.getReceipt(network, txid);
-      if (receipt || attempt === RECEIPT_LOG_REFETCH_RETRIES) {
-        return receipt;
-      }
-      await this.waitForReceiptRetry(RECEIPT_LOG_REFETCH_RETRY_DELAY_MS * Math.pow(2, attempt));
-    }
-  }
-
-  async waitForReceiptRetry(delayMs: number) {
-    await wait(delayMs);
-  }
-
   async populateReceipt(tx: MongoBound<IEVMTransaction>) {
-    const update = {} as Partial<IEVMTransaction>;
-    let shouldUpdate = false;
-    const shouldRefetchForLogEffects = this.shouldRefetchReceiptForLogEffects(tx);
-    let receiptFetched = false;
-    let receiptUnavailable = false;
-    if (!tx.receipt || shouldRefetchForLogEffects) {
-      let receipt;
-      let receiptFetchErrored = false;
-      try {
-        receipt = shouldRefetchForLogEffects
-          ? await this.getReceiptWithNullRetry(tx.network, tx.txid)
-          : await this.getReceipt(tx.network, tx.txid);
-      } catch (err) {
-        if (!tx.receipt) {
-          throw err;
-        }
-        receiptFetchErrored = true;
-        logger.warn('Unable to refetch receipt logs for tx %s; returning stored receipt: %o', tx.txid, err);
-      }
+    if (!tx.receipt) {
+      const receipt = await this.getReceipt(tx.network, tx.txid);
       if (receipt) {
+        const update = {} as Partial<IEVMTransaction>;
         tx.receipt = receipt as any;
-        update.receipt = tx.receipt;
-        receiptFetched = true;
         const fee = this.getReceiptFee(tx, receipt);
         if (fee !== undefined) {
           tx.fee = fee;
           update.fee = fee;
         }
-        shouldUpdate = true;
-      } else if (shouldRefetchForLogEffects && !receiptFetchErrored) {
-        tx.receiptLogEffectsUnavailable = true;
-        update.receiptLogEffectsUnavailable = true;
-        receiptUnavailable = true;
-        shouldUpdate = true;
-      }
-    }
-
-    // Only (re)derive effects when we just fetched a receipt with logs, or this tx has never
-    // been processed. Re-deriving an already-processed tx is wasteful on every read and can
-    // regress stored effects: the stored receipt has its logs stripped, so getEffects() can no
-    // longer reconcile against them and would re-add trace-derived ERC20 effects that the logs
-    // previously dropped.
-    if (tx.receipt && (receiptFetched || receiptUnavailable || (!shouldRefetchForLogEffects && !tx.receiptLogEffectsProcessed && !tx.receiptLogEffectsUnavailable))) {
-      const previousEffectCount = tx.effects?.length || 0;
-      const previousEffects = tx.effects ? JSON.stringify(tx.effects) : undefined;
-      const wasReceiptLogEffectsProcessed = !!tx.receiptLogEffectsProcessed;
-      let receiptLogEffectsProcessed = false;
-      if (EVMTransactionStorage.isFailedReceipt(tx.receipt)) {
-        tx.effects = [];
-        receiptLogEffectsProcessed = true;
-        if (previousEffectCount) {
-          update.effects = tx.effects;
-          shouldUpdate = true;
+        // Derive receipt-log effects while the logs are in hand. Stored receipts have their
+        // logs stripped, so this is the only chance to reconcile effects against them.
+        const hadLogs = Array.isArray(tx.receipt!.logs);
+        const failed = EVMTransactionStorage.isFailedReceipt(tx.receipt);
+        if (failed) {
+          tx.effects = [];
+        } else if (tx.effects?.length) {
+          const effects = [...tx.effects];
+          EVMTransactionStorage.addReceiptLogEffects(tx as IEVMTransactionInProcess, effects);
+          tx.effects = effects;
+        } else {
+          tx.effects = EVMTransactionStorage.getEffects(tx as IEVMTransactionInProcess);
         }
-      } else if (previousEffectCount) {
-        const effects = [...tx.effects!];
-        EVMTransactionStorage.addReceiptLogEffects(tx as IEVMTransactionInProcess, effects);
-        tx.effects = effects;
-        receiptLogEffectsProcessed = Array.isArray(tx.receipt.logs);
-      } else {
-        tx.effects = EVMTransactionStorage.getEffects(tx as IEVMTransactionInProcess);
-        receiptLogEffectsProcessed = !!tx.receiptLogEffectsProcessed;
-      }
-      if (JSON.stringify(tx.effects) !== previousEffects) {
         update.effects = tx.effects;
-        shouldUpdate = true;
+        if (failed || hadLogs) {
+          tx.receiptLogEffectsProcessed = true;
+          update.receiptLogEffectsProcessed = true;
+        }
+        // logs can be very large and are not currently needed for any use case in this codebase.
+        EVMTransactionStorage.stripReceiptLogs(tx as IEVMTransactionInProcess);
+        update.receipt = tx.receipt;
+        if (tx._id) {
+          await EVMTransactionStorage.collection.updateOne({ _id: tx._id }, { $set: update });
+        }
       }
-      if (!wasReceiptLogEffectsProcessed && receiptLogEffectsProcessed) {
-        tx.receiptLogEffectsProcessed = true;
-        update.receiptLogEffectsProcessed = true;
-        shouldUpdate = true;
-      }
-    }
-
-    // logs can be very large and are not currently needed for any use case in this codebase.
-    if (tx.receipt?.logs) {
+    } else if (tx.receipt.logs) {
+      // Rows that already have a receipt are served as stored; historical rows missing
+      // receipt-log effects are upgraded by scripts/backfillEvmReceiptLogEffects.js, not here.
       EVMTransactionStorage.stripReceiptLogs(tx as IEVMTransactionInProcess);
-      update.receipt = tx.receipt;
-      shouldUpdate = true;
-    }
-
-    if (shouldUpdate && tx._id) {
-      await EVMTransactionStorage.collection.updateOne({ _id: tx._id }, { $set: update });
     }
     return tx;
-  }
-
-  shouldRefetchReceiptForLogEffects(tx: MongoBound<IEVMTransaction>) {
-    return !!tx.receipt &&
-      tx.receipt.logs === undefined &&
-      !tx.receiptLogEffectsProcessed &&
-      !tx.receiptLogEffectsUnavailable &&
-      !EVMTransactionStorage.isFailedReceipt(tx.receipt);
   }
 
   getReceiptFee(tx: Pick<IEVMTransaction, 'gasPrice'>, receipt: any) {
@@ -570,9 +501,9 @@ export class BaseEVMStateProvider extends InternalStateProvider implements IChai
   }
 
   populateEffects(tx: MongoBound<IEVMTransaction>) {
-    if ((tx.receiptLogEffectsProcessed || tx.receiptLogEffectsUnavailable) && !tx.effects) {
+    if (tx.receiptLogEffectsProcessed && !tx.effects) {
       tx.effects = [];
-    } else if (!tx.effects || (tx.effects.length === 0 && !tx.receiptLogEffectsProcessed && !tx.receiptLogEffectsUnavailable)) {
+    } else if (!tx.effects || (tx.effects.length === 0 && !tx.receiptLogEffectsProcessed)) {
       tx.effects = EVMTransactionStorage.getEffects(tx as IEVMTransactionInProcess);
     }
     return tx;

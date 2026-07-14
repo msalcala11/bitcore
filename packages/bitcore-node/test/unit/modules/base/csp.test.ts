@@ -698,11 +698,12 @@ describe('BaseEVMStateProvider: populateReceipt', function() {
     expect(updateOne.called).to.equal(false);
   });
 
-  it('does not mark effects as receipt-log processed when effect derivation did not', async function() {
+  it('does not mark receipt-log processed when the fetched receipt has no logs array', async function() {
     const updateOne = sandbox.stub().resolves();
     sandbox.stub(EVMTransactionStorage, 'collection').get(() => ({ updateOne }));
     const provider = new BaseEVMStateProvider('ETH');
-    sandbox.stub(provider, 'getReceipt').resolves(receiptWithTransferLog() as any);
+    const { logs, ...receiptWithoutLogs } = receiptWithTransferLog();
+    sandbox.stub(provider, 'getReceipt').resolves(receiptWithoutLogs as any);
     const partialEffect = {
       to: walletAddress,
       from: sourceAddress,
@@ -736,60 +737,11 @@ describe('BaseEVMStateProvider: populateReceipt', function() {
     });
   });
 
-  it('refetches stripped receipts before merging ERC20 effects into existing partial effects', async function() {
+  it('serves stored receipts without refetching for log effects', async function() {
     const updateOne = sandbox.stub().resolves();
     sandbox.stub(EVMTransactionStorage, 'collection').get(() => ({ updateOne }));
     const provider = new BaseEVMStateProvider('ETH');
-    const getReceipt = sandbox.stub(provider, 'getReceipt').resolves(receiptWithTransferLog() as any);
-    const nativeEffect = {
-      to: walletAddress,
-      from: '0x963737C550E70FFe4D59464542a28604eDb2eF9a',
-      amount: '1',
-      callStack: '0'
-    };
-    const tx = {
-      _id: new ObjectId(),
-      txid,
-      chain: 'ETH',
-      network: 'mainnet',
-      from: nativeEffect.from,
-      to: sourceAddress,
-      value: 0,
-      gasPrice: 20,
-      gasLimit: 1500000,
-      nonce: 79903,
-      transactionIndex: 0,
-      receipt: {
-        status: true,
-        transactionHash: txid,
-        transactionIndex: 0,
-        blockHash: '0x0ce917ca8e25cccd7228a92895cc11c54fd61479dcec63c3234f16957e1970d9',
-        blockNumber: 15777684,
-        cumulativeGasUsed: 0,
-        gasUsed: 100
-      },
-      effects: [nativeEffect]
-    } as any;
-
-    await provider.populateReceipt(tx);
-
-    const effects = [nativeEffect, expectedTransferEffect()];
-    expect(getReceipt.callCount).to.equal(1);
-    expect(tx.effects).to.deep.equal(effects);
-    expect(tx.receipt.logs).to.equal(undefined);
-    expect(updateOne.firstCall.args[1].$set).to.deep.equal({
-      receipt: tx.receipt,
-      fee: 2000,
-      effects,
-      receiptLogEffectsProcessed: true
-    });
-  });
-
-  it('returns stored stripped receipts when lazy receipt-log refetch fails', async function() {
-    const updateOne = sandbox.stub().resolves();
-    sandbox.stub(EVMTransactionStorage, 'collection').get(() => ({ updateOne }));
-    const provider = new BaseEVMStateProvider('ETH');
-    const getReceipt = sandbox.stub(provider, 'getReceipt').rejects(new Error('rate limited'));
+    const getReceipt = sandbox.stub(provider, 'getReceipt').rejects(new Error('should not refetch'));
     const storedReceipt = {
       status: true,
       transactionHash: txid,
@@ -823,131 +775,10 @@ describe('BaseEVMStateProvider: populateReceipt', function() {
 
     await provider.populateReceipt(tx);
 
-    expect(getReceipt.callCount).to.equal(1);
+    expect(getReceipt.called).to.equal(false);
     expect(tx.receipt).to.deep.equal(storedReceipt);
     expect(tx.effects).to.deep.equal([nativeEffect]);
     expect(updateOne.called).to.equal(false);
-  });
-
-  it('marks missing lazy receipt-log refetches unavailable', async function() {
-    const updateOne = sandbox.stub().resolves();
-    sandbox.stub(EVMTransactionStorage, 'collection').get(() => ({ updateOne }));
-    const provider = new BaseEVMStateProvider('ETH');
-    const getReceipt = sandbox.stub(provider, 'getReceipt').resolves(null);
-    const waitForReceiptRetry = sandbox.stub(provider, 'waitForReceiptRetry').resolves();
-    const getEffects = sandbox.spy(EVMTransactionStorage, 'getEffects');
-    const tx = {
-      _id: new ObjectId(),
-      txid,
-      chain: 'ETH',
-      network: 'mainnet',
-      from: sourceAddress,
-      to: busdToken,
-      value: 0,
-      gasPrice: 20,
-      gasLimit: 1500000,
-      nonce: 79903,
-      transactionIndex: 0,
-      receipt: {
-        status: true,
-        transactionHash: txid,
-        transactionIndex: 0,
-        blockHash: '0x0ce917ca8e25cccd7228a92895cc11c54fd61479dcec63c3234f16957e1970d9',
-        blockNumber: 15777684,
-        cumulativeGasUsed: 0,
-        gasUsed: 100
-      },
-      calls: [{
-        from: sourceAddress,
-        to: busdToken,
-        value: '0',
-        depth: '0',
-        type: 'CALL',
-        abiType: {
-          type: 'ERC20',
-          name: 'transfer',
-          params: [
-            { name: '_to', type: 'address', value: walletAddress },
-            { name: '_value', type: 'uint256', value: amount }
-          ]
-        }
-      }],
-      effects: []
-    } as any;
-
-    await provider.populateReceipt(tx);
-    provider.populateEffects(tx);
-    provider.populateEffectsForAddresses(tx, [walletAddress]);
-
-    const effects = [{
-      to: walletAddress,
-      from: sourceAddress,
-      amount,
-      type: 'ERC20:transfer',
-      contractAddress: busdToken,
-      callStack: '0'
-    }];
-    expect(getReceipt.callCount).to.equal(3);
-    expect(waitForReceiptRetry.callCount).to.equal(2);
-    expect(getEffects.callCount).to.equal(1);
-    expect(tx.effects).to.deep.equal(effects);
-    expect(tx.receiptLogEffectsUnavailable).to.equal(true);
-    expect(updateOne.firstCall.args[1].$set).to.deep.equal({
-      effects,
-      receiptLogEffectsUnavailable: true
-    });
-
-    await provider.populateReceipt(tx);
-
-    expect(getReceipt.callCount).to.equal(3);
-  });
-
-  it('uses a receipt-log refetch that succeeds after a null retry', async function() {
-    const updateOne = sandbox.stub().resolves();
-    sandbox.stub(EVMTransactionStorage, 'collection').get(() => ({ updateOne }));
-    const provider = new BaseEVMStateProvider('ETH');
-    const getReceipt = sandbox.stub(provider, 'getReceipt');
-    getReceipt.onFirstCall().resolves(null);
-    getReceipt.onSecondCall().resolves(receiptWithTransferLog() as any);
-    const waitForReceiptRetry = sandbox.stub(provider, 'waitForReceiptRetry').resolves();
-    const tx = {
-      _id: new ObjectId(),
-      txid,
-      chain: 'ETH',
-      network: 'mainnet',
-      from: sourceAddress,
-      to: busdToken,
-      value: 0,
-      gasPrice: 20,
-      gasLimit: 1500000,
-      nonce: 79903,
-      transactionIndex: 0,
-      receipt: {
-        status: true,
-        transactionHash: txid,
-        transactionIndex: 0,
-        blockHash: '0x0ce917ca8e25cccd7228a92895cc11c54fd61479dcec63c3234f16957e1970d9',
-        blockNumber: 15777684,
-        cumulativeGasUsed: 0,
-        gasUsed: 100
-      },
-      effects: []
-    } as any;
-
-    await provider.populateReceipt(tx);
-
-    const effects = [expectedTransferEffect()];
-    expect(getReceipt.callCount).to.equal(2);
-    expect(waitForReceiptRetry.callCount).to.equal(1);
-    expect(tx.effects).to.deep.equal(effects);
-    expect(tx.receiptLogEffectsProcessed).to.equal(true);
-    expect(tx.receiptLogEffectsUnavailable).to.equal(undefined);
-    expect(updateOne.firstCall.args[1].$set).to.deep.equal({
-      receipt: tx.receipt,
-      fee: 2000,
-      effects,
-      receiptLogEffectsProcessed: true
-    });
   });
 
   it('does not refetch receipts with known-empty logs', async function() {
@@ -984,57 +815,7 @@ describe('BaseEVMStateProvider: populateReceipt', function() {
 
     expect(getReceipt.called).to.equal(false);
     expect(tx.receipt.logs).to.equal(undefined);
-    expect(tx.receiptLogEffectsProcessed).to.equal(true);
-    expect(updateOne.firstCall.args[1].$set).to.deep.equal({
-      receipt: tx.receipt,
-      receiptLogEffectsProcessed: true
-    });
-  });
-
-  it('persists same-length ERC20 effect replacements from receipt logs', async function() {
-    const updateOne = sandbox.stub().resolves();
-    sandbox.stub(EVMTransactionStorage, 'collection').get(() => ({ updateOne }));
-    const provider = new BaseEVMStateProvider('ETH');
-    sandbox.stub(provider, 'getReceipt').resolves(receiptWithTransferLog() as any);
-    const staleTraceEffect = {
-      ...expectedTransferEffect(),
-      amount: '100000000000000000000',
-      callStack: '0'
-    };
-    const tx = {
-      _id: new ObjectId(),
-      txid,
-      chain: 'ETH',
-      network: 'mainnet',
-      from: '0x963737C550E70FFe4D59464542a28604eDb2eF9a',
-      to: sourceAddress,
-      value: 0,
-      gasPrice: 20,
-      gasLimit: 1500000,
-      nonce: 79903,
-      transactionIndex: 0,
-      receipt: {
-        status: true,
-        transactionHash: txid,
-        transactionIndex: 0,
-        blockHash: '0x0ce917ca8e25cccd7228a92895cc11c54fd61479dcec63c3234f16957e1970d9',
-        blockNumber: 15777684,
-        cumulativeGasUsed: 0,
-        gasUsed: 100
-      },
-      effects: [staleTraceEffect]
-    } as any;
-
-    await provider.populateReceipt(tx);
-
-    const effects = [expectedTransferEffect()];
-    expect(tx.effects).to.deep.equal(effects);
-    expect(updateOne.firstCall.args[1].$set).to.deep.equal({
-      receipt: tx.receipt,
-      fee: 2000,
-      effects,
-      receiptLogEffectsProcessed: true
-    });
+    expect(updateOne.called).to.equal(false);
   });
 
   it('does not refetch or recompute effects for already-processed receipts on re-read', async function() {
@@ -1162,11 +943,12 @@ describe('BaseEVMStateProvider: populateReceipt', function() {
     expect(JSON.parse(streamedTx).effects).to.deep.equal([]);
   });
 
-  it('clears existing effects when the stored receipt failed', async function() {
+  it('clears effects when a fetched receipt reports a failed tx', async function() {
     const updateOne = sandbox.stub().resolves();
     sandbox.stub(EVMTransactionStorage, 'collection').get(() => ({ updateOne }));
     const provider = new BaseEVMStateProvider('ETH');
-    const getReceipt = sandbox.stub(provider, 'getReceipt').resolves(receiptWithTransferLog() as any);
+    const failedReceipt = { ...receiptWithTransferLog(), status: false };
+    sandbox.stub(provider, 'getReceipt').resolves(failedReceipt as any);
     const tx = {
       _id: new ObjectId(),
       txid,
@@ -1179,23 +961,15 @@ describe('BaseEVMStateProvider: populateReceipt', function() {
       gasLimit: 1500000,
       nonce: 79903,
       transactionIndex: 0,
-      receipt: {
-        status: false,
-        transactionHash: txid,
-        transactionIndex: 0,
-        blockHash: '0x0ce917ca8e25cccd7228a92895cc11c54fd61479dcec63c3234f16957e1970d9',
-        blockNumber: 15777684,
-        cumulativeGasUsed: 0,
-        gasUsed: 100
-      },
       effects: [expectedTransferEffect()]
     } as any;
 
     await provider.populateReceipt(tx);
 
-    expect(getReceipt.callCount).to.equal(0);
     expect(tx.effects).to.deep.equal([]);
     expect(updateOne.firstCall.args[1].$set).to.deep.equal({
+      receipt: tx.receipt,
+      fee: 2000,
       effects: [],
       receiptLogEffectsProcessed: true
     });
@@ -1217,15 +991,10 @@ describe('PopulateReceiptTransform', function() {
   beforeEach(function() { sandbox = sinon.createSandbox(); });
   afterEach(function() { sandbox.restore(); });
 
-  it('uses the same failed receipt enrichment outcome for duplicate txid rows', async function() {
+  it('pushes rows unenriched when populateReceipt fails', async function() {
     const populateReceipt = sandbox.stub();
     populateReceipt.onFirstCall().rejects(new Error('rate limited'));
-    populateReceipt.onSecondCall().resolves({
-      txid: duplicateTxid,
-      value: '200',
-      effects: [transferEffect],
-      receiptLogEffectsProcessed: true
-    });
+    populateReceipt.onSecondCall().callsFake(async tx => ({ ...tx, effects: [transferEffect], receiptLogEffectsProcessed: true }));
     const stream = new PopulateReceiptTransform({ populateReceipt } as any);
     const rows = new Array<any>();
     const done = new Promise<void>((resolve, reject) => {
@@ -1240,20 +1009,20 @@ describe('PopulateReceiptTransform', function() {
     stream.end();
     await done;
 
-    expect(populateReceipt.callCount).to.equal(1);
+    expect(populateReceipt.callCount).to.equal(2);
     expect(rows.map(row => row.value)).to.deep.equal(['100', '200']);
-    expect(rows.map(row => row.receiptLogEffectsProcessed)).to.deep.equal([undefined, undefined]);
+    expect(rows.map(row => row.receiptLogEffectsProcessed)).to.deep.equal([undefined, true]);
+    expect(rows[1].effects).to.deep.equal([transferEffect]);
   });
 
-  it('reuses successful receipt enrichment for duplicate txid rows', async function() {
-    const populateReceipt = sandbox.stub().resolves({
-      txid: duplicateTxid,
-      value: '100',
+  it('enriches each row through populateReceipt', async function() {
+    const populateReceipt = sandbox.stub().callsFake(async tx => ({
+      ...tx,
       fee: 2000,
       receipt: { status: true },
       effects: [transferEffect],
       receiptLogEffectsProcessed: true
-    });
+    }));
     const stream = new PopulateReceiptTransform({ populateReceipt } as any);
     const rows = new Array<any>();
     const done = new Promise<void>((resolve, reject) => {
@@ -1268,11 +1037,9 @@ describe('PopulateReceiptTransform', function() {
     stream.end();
     await done;
 
-    expect(populateReceipt.callCount).to.equal(1);
+    expect(populateReceipt.callCount).to.equal(2);
     expect(rows.map(row => row.value)).to.deep.equal(['100', '200']);
     expect(rows.map(row => row.effects)).to.deep.equal([[transferEffect], [transferEffect]]);
-    expect(rows[0].effects).to.not.equal(rows[1].effects);
-    expect(rows[0].receipt).to.not.equal(rows[1].receipt);
     expect(rows.map(row => row.receiptLogEffectsProcessed)).to.deep.equal([true, true]);
   });
 });
