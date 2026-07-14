@@ -503,6 +503,119 @@ describe('Transaction Model', function() {
         expect(rows).to.deep.equal([]);
       });
 
+      it('should emit an explicit ERC20 transfer abiType on token history rows', async () => {
+        const busdToken = Web3.utils.toChecksumAddress('0x4fabb145d64652a948d72533023f6e7a623c7c53');
+        const walletAddress = Web3.utils.toChecksumAddress('0xa91cfe0dcad33f36f3c9428d48eccbd8a71951b4');
+        const counterpartyAddress = Web3.utils.toChecksumAddress('0x8489935991b0eac9ce9e9330d35b9734ecdf2cad');
+        const rows = await collectEvmListTransactionRows([walletAddress], busdToken, [{
+          _id: new ObjectId(),
+          txid: '0x28d6aa82a06e58290d10cc33ed2bc782d6c7aeb38d29ce218be53678731fe911',
+          chain: 'ETH',
+          network: 'mainnet',
+          blockHeight: 15950646,
+          blockTimeNormalized: new Date('2022-11-12T01:26:59.000Z'),
+          from: counterpartyAddress,
+          to: busdToken,
+          value: 0,
+          fee: 622112000000000,
+          gasPrice: 16000000000,
+          gasLimit: 160000,
+          nonce: 5,
+          transactionIndex: 0,
+          data: Buffer.from(''),
+          internal: [],
+          calls: [],
+          receipt: { status: true },
+          effects: [{
+            to: walletAddress,
+            from: counterpartyAddress,
+            amount: '100',
+            type: 'ERC20:transfer',
+            contractAddress: busdToken,
+            callStack: 'log:7'
+          }]
+        }]);
+
+        expect(rows).to.have.length(1);
+        expect(rows[0].abiType).to.deep.equal({ type: 'ERC20', name: 'transfer', params: [] });
+      });
+
+      it('should emit an ERC20 transfer abiType on native rows for direct token calls', async () => {
+        const busdToken = Web3.utils.toChecksumAddress('0x4fabb145d64652a948d72533023f6e7a623c7c53');
+        const walletAddress = Web3.utils.toChecksumAddress('0xa91cfe0dcad33f36f3c9428d48eccbd8a71951b4');
+        const counterpartyAddress = Web3.utils.toChecksumAddress('0x8489935991b0eac9ce9e9330d35b9734ecdf2cad');
+        const rows = await collectEvmListTransactionRows([walletAddress], undefined, [{
+          _id: new ObjectId(),
+          txid: '0x28d6aa82a06e58290d10cc33ed2bc782d6c7aeb38d29ce218be53678731fe911',
+          chain: 'ETH',
+          network: 'mainnet',
+          blockHeight: 15950646,
+          blockTimeNormalized: new Date('2022-11-12T01:26:59.000Z'),
+          from: walletAddress,
+          to: busdToken,
+          value: 0,
+          fee: 622112000000000,
+          gasPrice: 16000000000,
+          gasLimit: 160000,
+          nonce: 5,
+          transactionIndex: 0,
+          data: Buffer.from(''),
+          internal: [],
+          calls: [],
+          receipt: { status: true },
+          effects: [{
+            to: counterpartyAddress,
+            from: walletAddress,
+            amount: '100',
+            type: 'ERC20:transfer',
+            contractAddress: busdToken,
+            callStack: 'log:7'
+          }]
+        }]);
+
+        expect(rows).to.have.length(1);
+        expect(rows[0].category).to.equal('send');
+        expect(rows[0].abiType).to.deep.equal({ type: 'ERC20', name: 'transfer', params: [] });
+      });
+
+      it('should not mark native rows with incidental token effects as token transfers', async () => {
+        const busdToken = Web3.utils.toChecksumAddress('0x4fabb145d64652a948d72533023f6e7a623c7c53');
+        const routerAddress = Web3.utils.toChecksumAddress('0x1111111254eeb25477b68fb85ed929f73a960582');
+        const walletAddress = Web3.utils.toChecksumAddress('0xa91cfe0dcad33f36f3c9428d48eccbd8a71951b4');
+        const counterpartyAddress = Web3.utils.toChecksumAddress('0x8489935991b0eac9ce9e9330d35b9734ecdf2cad');
+        const rows = await collectEvmListTransactionRows([walletAddress], undefined, [{
+          _id: new ObjectId(),
+          txid: '0x28d6aa82a06e58290d10cc33ed2bc782d6c7aeb38d29ce218be53678731fe911',
+          chain: 'ETH',
+          network: 'mainnet',
+          blockHeight: 15950646,
+          blockTimeNormalized: new Date('2022-11-12T01:26:59.000Z'),
+          from: walletAddress,
+          to: routerAddress,
+          value: 500,
+          fee: 622112000000000,
+          gasPrice: 16000000000,
+          gasLimit: 160000,
+          nonce: 5,
+          transactionIndex: 0,
+          data: Buffer.from(''),
+          internal: [],
+          calls: [],
+          receipt: { status: true },
+          effects: [{
+            to: counterpartyAddress,
+            from: walletAddress,
+            amount: '100',
+            type: 'ERC20:transfer',
+            contractAddress: busdToken,
+            callStack: 'log:7'
+          }]
+        }]);
+
+        expect(rows).to.have.length(1);
+        expect(rows[0].abiType).to.equal(undefined);
+      });
+
       it('should emit token history rows with lowercase effect contract addresses', async () => {
         const busdToken = Web3.utils.toChecksumAddress('0x4fabb145d64652a948d72533023f6e7a623c7c53');
         const walletAddress = Web3.utils.toChecksumAddress('0xa91cfe0dcad33f36f3c9428d48eccbd8a71951b4');

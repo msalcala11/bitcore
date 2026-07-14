@@ -3954,84 +3954,10 @@ export class WalletService implements IWalletService {
 
         // This adapter rebuilds the abiType property from data contained in the effects so that it returns what wallet is used to
         // If we remove the slight reliance in the wallet on abiType then we can remove this adapter
-        function satoshisMatchesEffect(tx, effect) {
-          let txSatoshisBigInt;
-          let effectAmountBigInt;
-          try {
-            txSatoshisBigInt = BigInt(tx.satoshis);
-            effectAmountBigInt = BigInt(effect.amount);
-            if (txSatoshisBigInt === effectAmountBigInt || txSatoshisBigInt === -effectAmountBigInt) {
-              return true;
-            }
-            if (typeof tx.satoshis !== 'number' || Number.isSafeInteger(tx.satoshis)) {
-              return false;
-            }
-          } catch {
-            // Fall through to rounded-number comparison for JS number values.
-          }
-          const txSatoshis = Number(tx.satoshis);
-          const effectAmount = Number(effect.amount);
-          return Number.isFinite(txSatoshis) &&
-            Number.isFinite(effectAmount) &&
-            (txSatoshis === effectAmount || txSatoshis === -effectAmount);
-        }
-
-        function satoshisMatchesEffectTotal(tx, effects, contractAddress) {
-          const contractAddressLower = contractAddress?.toLowerCase();
-          const totalEffects = effects.filter(e =>
-            e.type == 'ERC20:transfer' &&
-            typeof e.callStack == 'string' &&
-            e.callStack.startsWith('log:') &&
-            e.contractAddress?.toLowerCase() == contractAddressLower
-          );
-          if (!totalEffects.length) return false;
-          let txSatoshisBigInt;
-          let totalBigInt;
-          try {
-            txSatoshisBigInt = BigInt(tx.satoshis);
-            const absoluteTxSatoshis = txSatoshisBigInt < 0n ? -txSatoshisBigInt : txSatoshisBigInt;
-            totalBigInt = totalEffects.reduce((sum, effect) => sum + BigInt(effect.amount || 0), 0n);
-            if (totalBigInt > 0n && absoluteTxSatoshis === totalBigInt) return true;
-            if (typeof tx.satoshis !== 'number' || Number.isSafeInteger(tx.satoshis)) {
-              return false;
-            }
-          } catch {
-            // Fall through to rounded-number comparison for JS number values.
-          }
-          const txSatoshis = Math.abs(Number(tx.satoshis));
-          const total = totalEffects.reduce((sum, effect) => sum + Number(effect.amount || 0), 0);
-          return total > 0 && Number.isFinite(txSatoshis) && Number.isFinite(total) && txSatoshis === total;
-        }
-
-        function hasZeroSatoshis(tx) {
-          try {
-            return BigInt(tx.satoshis) === 0n;
-          } catch {
-            return Number(tx.satoshis) === 0;
-          }
-        }
-
-        function recreateAbiType(tx) {
-          // Check if any top-level or receipt-log-derived effects are ERC20 transfers
-          const { effects } = tx;
+        function recreateAbiType(effects) {
+          // Check if any top level effects are ERC20 transfers
           if (effects && effects.length) {
-            const erc20Transfer = effects.find(e => {
-              const isReceiptLogEffect = typeof e.callStack == 'string' && e.callStack.startsWith('log:');
-              const txAddress = tx.address?.toLowerCase();
-              const matchesRowAddress = txAddress && (
-                txAddress == e.to?.toLowerCase() ||
-                txAddress == e.from?.toLowerCase()
-              );
-              const isTokenHistoryRow = isReceiptLogEffect &&
-                matchesRowAddress &&
-                (satoshisMatchesEffect(tx, e) || satoshisMatchesEffectTotal(tx, effects, e.contractAddress));
-              const isDirectTokenCall = isReceiptLogEffect &&
-                txAddress &&
-                txAddress == e.contractAddress?.toLowerCase() &&
-                hasZeroSatoshis(tx) &&
-                tx.from?.toLowerCase() == e.from?.toLowerCase();
-              return e.type == 'ERC20:transfer' && (e.callStack == '' || isTokenHistoryRow || isDirectTokenCall);
-            });
+            const erc20Transfer = effects.find(e => e.type == 'ERC20:transfer' && e.callStack == '');
             if (erc20Transfer) {
               // This is the only data used in old wallet and bitpay-app
               return { name: 'transfer' };
@@ -4058,7 +3984,7 @@ export class WalletService implements IWalletService {
           network: tx.network,
           chain: tx.chain,
           data: tx.data,
-          abiType: tx.abiType || recreateAbiType(tx),
+          abiType: tx.abiType || recreateAbiType(tx.effects),
           gasPrice: tx.gasPrice,
           maxGasFee: tx.maxGasFee,
           priorityGasFee: tx.priorityGasFee,

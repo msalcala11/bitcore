@@ -54,6 +54,13 @@ export class EVMListTransactionsStream extends TransformWithEventPipe {
       baseTx.data = transaction.data ? transaction.data.toString() : '';
     }
 
+    // Rows we know are token transfers carry an explicit abiType so consumers (BWS, wallets)
+    // don't have to re-infer it from effects: every row of a token-history stream, and native
+    // rows whose top-level call hit a token contract that emitted a transfer.
+    if (!baseTx.abiType && (this.tokenAddress || this.isTopLevelErc20Transfer(transaction))) {
+      baseTx.abiType = { type: 'ERC20', name: 'transfer', params: [] };
+    }
+
     const matchingReceiveEffects = (transaction.effects || []).filter(effect =>
       this.isWalletAddress(effect.to) &&
       this.matchesTokenAddress(effect.contractAddress) &&
@@ -106,6 +113,16 @@ export class EVMListTransactionsStream extends TransformWithEventPipe {
 
   private isWalletMoveEffect(effect: { from?: string; to?: string }) {
     return this.isWalletAddress(effect.from) && this.isWalletAddress(effect.to);
+  }
+
+  private isTopLevelErc20Transfer(transaction: MongoBound<IEVMTransactionTransformed>) {
+    const txTo = transaction.to?.toLowerCase();
+    if (!txTo) {
+      return false;
+    }
+    return !!transaction.effects?.some(effect =>
+      effect.type === 'ERC20:transfer' && effect.contractAddress?.toLowerCase() === txTo
+    );
   }
 
   private isWalletAddress(address?: string) {

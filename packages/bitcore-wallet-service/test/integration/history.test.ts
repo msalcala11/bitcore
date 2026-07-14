@@ -1012,7 +1012,7 @@ describe('History', function() {
       });
     });
 
-    it('should recreate abiType for receipt-log ERC20 effects', function(done) {
+    it('should pass through abiType provided by bitcore-node for token history rows', function(done) {
       const txs = [{
         id: 'receipt-log-erc20',
         txid: '0xbaf62c1c4de9761a421608634a4ad0f7dfbfa3546227c0f4044322bdda095f43',
@@ -1023,6 +1023,7 @@ describe('History', function() {
         address: '0xa91cFe0DcAd33F36f3c9428D48eCCBD8A71951b4',
         chain: 'ETH',
         network: 'mainnet',
+        abiType: { type: 'ERC20', name: 'transfer', params: [] },
         effects: [{
           type: 'ERC20:transfer',
           to: '0xa91cFe0DcAd33F36f3c9428D48eCCBD8A71951b4',
@@ -1038,51 +1039,19 @@ describe('History', function() {
         should.not.exist(err);
         should.exist(txs);
         txs.length.should.equal(1);
-        txs[0].abiType.should.deep.equal({ name: 'transfer' });
+        txs[0].abiType.should.deep.equal({ type: 'ERC20', name: 'transfer', params: [] });
         done();
       });
     });
 
-    it('should recreate abiType for rounded receipt-log ERC20 send amounts', function(done) {
-      const amount = '1123456789123456789';
+    it('should not recreate abiType from receipt-log effects without node-provided abiType', function(done) {
       const txs = [{
-        id: 'receipt-log-erc20-rounded-send',
-        txid: '0xbaf62c1c4de9761a421608634a4ad0f7dfbfa3546227c0f4044322bdda095f43',
-        blockTime: '2022-10-18T21:28:59.000Z',
-        category: 'send',
-        height: BCHEIGHT,
-        satoshis: -Number(amount),
-        address: '0xa91cFe0DcAd33F36f3c9428D48eCCBD8A71951b4',
-        chain: 'ETH',
-        network: 'mainnet',
-        effects: [{
-          type: 'ERC20:transfer',
-          to: '0xa91cFe0DcAd33F36f3c9428D48eCCBD8A71951b4',
-          from: '0xa81011Ae274eF6deBd3BDaB634102c7b6c2C452D',
-          amount,
-          contractAddress: '0x4Fabb145d64652a948d72533023f6E7A623C7C53',
-          callStack: 'log:7'
-        }]
-      }];
-      helpers.stubHistory(null, null, txs);
-
-      server.getTxHistory({}, function(err, txs) {
-        should.not.exist(err);
-        should.exist(txs);
-        txs.length.should.equal(1);
-        txs[0].abiType.should.deep.equal({ name: 'transfer' });
-        done();
-      });
-    });
-
-    it('should not recreate abiType for exact receipt-log amount mismatches that round together', function(done) {
-      const txs = [{
-        id: 'receipt-log-erc20-rounded-collision',
+        id: 'receipt-log-erc20-no-abitype',
         txid: '0xbaf62c1c4de9761a421608634a4ad0f7dfbfa3546227c0f4044322bdda095f43',
         blockTime: '2022-10-18T21:28:59.000Z',
         category: 'receive',
         height: BCHEIGHT,
-        satoshis: '1000000000000000001',
+        satoshis: 1000,
         address: '0xa91cFe0DcAd33F36f3c9428D48eCCBD8A71951b4',
         chain: 'ETH',
         network: 'mainnet',
@@ -1090,146 +1059,6 @@ describe('History', function() {
           type: 'ERC20:transfer',
           to: '0xa91cFe0DcAd33F36f3c9428D48eCCBD8A71951b4',
           from: '0xa81011Ae274eF6deBd3BDaB634102c7b6c2C452D',
-          amount: '1000000000000000000',
-          contractAddress: '0x4Fabb145d64652a948d72533023f6E7A623C7C53',
-          callStack: 'log:7'
-        }]
-      }];
-      helpers.stubHistory(null, null, txs);
-
-      server.getTxHistory({}, function(err, txs) {
-        should.not.exist(err);
-        should.exist(txs);
-        txs.length.should.equal(1);
-        should.not.exist(txs[0].abiType);
-        done();
-      });
-    });
-
-    it('should recreate abiType for aggregated receipt-log ERC20 rows', function(done) {
-      const txs = [{
-        id: 'receipt-log-erc20-aggregate',
-        txid: '0xbaf62c1c4de9761a421608634a4ad0f7dfbfa3546227c0f4044322bdda095f43',
-        blockTime: '2022-10-18T21:28:59.000Z',
-        category: 'receive',
-        height: BCHEIGHT,
-        satoshis: 3000,
-        address: '0xa91cFe0DcAd33F36f3c9428D48eCCBD8A71951b4',
-        chain: 'ETH',
-        network: 'mainnet',
-        effects: [{
-          type: 'ERC20:transfer',
-          to: '0xa91cFe0DcAd33F36f3c9428D48eCCBD8A71951b4',
-          from: '0x8489935991b0EAC9ce9e9330D35b9734EcDF2CAd',
-          amount: '1000',
-          contractAddress: '0x4Fabb145d64652a948d72533023f6E7A623C7C53',
-          callStack: 'log:7'
-        }, {
-          type: 'ERC20:transfer',
-          to: '0xa91cFe0DcAd33F36f3c9428D48eCCBD8A71951b4',
-          from: '0xa81011Ae274eF6deBd3BDaB634102c7b6c2C452D',
-          amount: '2000',
-          contractAddress: '0x4Fabb145d64652a948d72533023f6E7A623C7C53',
-          callStack: 'log:8'
-        }]
-      }];
-      helpers.stubHistory(null, null, txs);
-
-      server.getTxHistory({}, function(err, txs) {
-        should.not.exist(err);
-        should.exist(txs);
-        txs.length.should.equal(1);
-        txs[0].abiType.should.deep.equal({ name: 'transfer' });
-        done();
-      });
-    });
-
-    it('should not recreate abiType for exact aggregated amount mismatches that round together', function(done) {
-      const txs = [{
-        id: 'receipt-log-erc20-aggregate-rounded-collision',
-        txid: '0xbaf62c1c4de9761a421608634a4ad0f7dfbfa3546227c0f4044322bdda095f43',
-        blockTime: '2022-10-18T21:28:59.000Z',
-        category: 'receive',
-        height: BCHEIGHT,
-        satoshis: '3000000000000000001',
-        address: '0xa91cFe0DcAd33F36f3c9428D48eCCBD8A71951b4',
-        chain: 'ETH',
-        network: 'mainnet',
-        effects: [{
-          type: 'ERC20:transfer',
-          to: '0xa91cFe0DcAd33F36f3c9428D48eCCBD8A71951b4',
-          from: '0x8489935991b0EAC9ce9e9330D35b9734EcDF2CAd',
-          amount: '1000000000000000000',
-          contractAddress: '0x4Fabb145d64652a948d72533023f6E7A623C7C53',
-          callStack: 'log:7'
-        }, {
-          type: 'ERC20:transfer',
-          to: '0xa91cFe0DcAd33F36f3c9428D48eCCBD8A71951b4',
-          from: '0xa81011Ae274eF6deBd3BDaB634102c7b6c2C452D',
-          amount: '2000000000000000000',
-          contractAddress: '0x4Fabb145d64652a948d72533023f6E7A623C7C53',
-          callStack: 'log:8'
-        }]
-      }];
-      helpers.stubHistory(null, null, txs);
-
-      server.getTxHistory({}, function(err, txs) {
-        should.not.exist(err);
-        should.exist(txs);
-        txs.length.should.equal(1);
-        should.not.exist(txs[0].abiType);
-        done();
-      });
-    });
-
-    it('should recreate abiType for direct receipt-log token calls', function(done) {
-      const txs = [{
-        id: 'receipt-log-erc20-direct-call',
-        txid: '0xbaf62c1c4de9761a421608634a4ad0f7dfbfa3546227c0f4044322bdda095f43',
-        blockTime: '2022-10-18T21:28:59.000Z',
-        category: 'send',
-        height: BCHEIGHT,
-        satoshis: 0,
-        address: '0x4Fabb145d64652a948d72533023f6E7A623C7C53',
-        from: '0xa81011Ae274eF6deBd3BDaB634102c7b6c2C452D',
-        chain: 'ETH',
-        network: 'mainnet',
-        effects: [{
-          type: 'ERC20:transfer',
-          to: '0xa91cFe0DcAd33F36f3c9428D48eCCBD8A71951b4',
-          from: '0xa81011Ae274eF6deBd3BDaB634102c7b6c2C452D',
-          amount: '1000',
-          contractAddress: '0x4Fabb145d64652a948d72533023f6E7A623C7C53',
-          callStack: 'log:7'
-        }]
-      }];
-      helpers.stubHistory(null, null, txs);
-
-      server.getTxHistory({}, function(err, txs) {
-        should.not.exist(err);
-        should.exist(txs);
-        txs.length.should.equal(1);
-        txs[0].abiType.should.deep.equal({ name: 'transfer' });
-        done();
-      });
-    });
-
-    it('should not recreate abiType for native value calls to token contracts', function(done) {
-      const txs = [{
-        id: 'receipt-log-token-native-value',
-        txid: '0xbaf62c1c4de9761a421608634a4ad0f7dfbfa3546227c0f4044322bdda095f43',
-        blockTime: '2022-10-18T21:28:59.000Z',
-        category: 'send',
-        height: BCHEIGHT,
-        satoshis: -500,
-        address: '0x4Fabb145d64652a948d72533023f6E7A623C7C53',
-        from: '0xa81011Ae274eF6deBd3BDaB634102c7b6c2C452D',
-        chain: 'ETH',
-        network: 'mainnet',
-        effects: [{
-          type: 'ERC20:transfer',
-          to: '0xa91cFe0DcAd33F36f3c9428D48eCCBD8A71951b4',
-          from: '0x0000000000000000000000000000000000000000',
           amount: '1000',
           contractAddress: '0x4Fabb145d64652a948d72533023f6E7A623C7C53',
           callStack: 'log:7'
