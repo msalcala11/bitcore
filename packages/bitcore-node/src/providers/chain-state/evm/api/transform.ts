@@ -117,11 +117,19 @@ export class EVMListTransactionsStream extends TransformWithEventPipe {
 
   private isTopLevelErc20Transfer(transaction: MongoBound<IEVMTransactionTransformed>) {
     const txTo = transaction.to?.toLowerCase();
-    if (!txTo) {
+    const txFrom = transaction.from?.toLowerCase();
+    if (!txTo || !txFrom) {
+      return false;
+    }
+    // A native-value call to a token contract (e.g. Lido submit()) can emit Transfer logs
+    // but is still a native send, not a token transfer.
+    if (Number(transaction.value || 0) !== 0) {
       return false;
     }
     return !!transaction.effects?.some(effect =>
-      effect.type === 'ERC20:transfer' && effect.contractAddress?.toLowerCase() === txTo
+      effect.type === 'ERC20:transfer' &&
+      effect.contractAddress?.toLowerCase() === txTo &&
+      effect.from?.toLowerCase() === txFrom
     );
   }
 
