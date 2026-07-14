@@ -1,4 +1,5 @@
 import { Utils } from '@bitpay-labs/crypto-wallet-core';
+import logger from '../../../../logger';
 import { wait } from '../../../../utils';
 import type { IEVMTransactionInProcess, TxReceipt } from '../types';
 import type { Web3 } from '@bitpay-labs/crypto-wallet-core';
@@ -24,26 +25,40 @@ export async function addReceiptsToTxs(
     return;
   }
 
+  // Use whatever the batch call returned and fetch only the misses individually.
   const blockReceipts = await getBlockReceipts(web3, txs);
-  if (blockReceipts) {
-    for (const tx of txs) {
-      setReceiptAndFee(tx, blockReceipts.get(tx.txid.toLowerCase()));
+  const missingTxs: IEVMTransactionInProcess[] = [];
+  for (const tx of txs) {
+    const receipt = blockReceipts?.get(tx.txid.toLowerCase());
+    if (receipt) {
+      setReceiptAndFee(tx, receipt);
+    } else {
+      missingTxs.push(tx);
     }
+  }
+  if (!missingTxs.length) {
     return;
   }
 
   const concurrency = getReceiptFetchConcurrency(opts.concurrency);
-  const workerCount = Math.min(concurrency, txs.length);
+  const workerCount = Math.min(concurrency, missingTxs.length);
   let nextIndex = 0;
 
   const workers = new Array(workerCount).fill(undefined).map(async () => {
-    while (nextIndex < txs.length) {
-      const tx = txs[nextIndex++];
-      const receipt = await getReceiptWithRetry(web3, tx.txid, {
-        retries: opts.retries ?? DEFAULT_RECEIPT_RETRIES,
-        retryDelayMs: opts.retryDelayMs ?? DEFAULT_RECEIPT_RETRY_DELAY_MS
-      });
-      setReceiptAndFee(tx, receipt);
+    while (nextIndex < missingTxs.length) {
+      const tx = missingTxs[nextIndex++];
+      try {
+        const receipt = await getReceiptWithRetry(web3, tx.txid, {
+          retries: opts.retries ?? DEFAULT_RECEIPT_RETRIES,
+          retryDelayMs: opts.retryDelayMs ?? DEFAULT_RECEIPT_RETRY_DELAY_MS
+        });
+        setReceiptAndFee(tx, receipt);
+      } catch (err: any) {
+        // Never fail block processing over a receipt: the tx is stored without
+        // receipt-log effects (receiptLogEffectsProcessed stays unset), so it is
+        // repaired later by scripts/backfillEvmReceiptLogEffects.js or on read.
+        logger.warn('Continuing without receipt for tx %o: %o', tx.txid, err?.message || err);
+      }
     }
   });
 
@@ -87,12 +102,7 @@ async function getBlockReceipts(
       receiptsByTxid.set(receipt.transactionHash.toLowerCase(), receipt);
     }
   }
-
-  for (const tx of txs) {
-    if (!receiptsByTxid.has(tx.txid.toLowerCase())) {
-      return;
-    }
-  }
+  // May be missing some of the block's txs; the caller fetches those individually.
   return receiptsByTxid;
 }
 
@@ -189,11 +199,19 @@ async function getReceiptWithRetry(
 
 function setReceiptAndFee(tx: IEVMTransactionInProcess, receipt: any) {
   tx.receipt = normalizeReceipt(receipt) as unknown as TxReceipt;
-  const gasUsed = toBigInt(tx.receipt.gasUsed);
-  const gasPrice = toBigInt((tx.receipt as any).effectiveGasPrice ?? tx.gasPrice);
-  if (gasUsed !== undefined && gasPrice !== undefined && gasUsed >= 0n && gasPrice >= 0n) {
-    tx.fee = Number(gasUsed * gasPrice);
+  const fee = computeReceiptFee(tx.receipt, tx.gasPrice);
+  if (fee !== undefined) {
+    tx.fee = fee;
   }
+}
+
+export function computeReceiptFee(receipt: any, fallbackGasPrice?: number | string | bigint): number | undefined {
+  const gasUsed = toBigInt(receipt?.gasUsed);
+  const gasPrice = toBigInt(receipt?.effectiveGasPrice ?? fallbackGasPrice);
+  if (gasUsed === undefined || gasPrice === undefined || gasUsed < 0n || gasPrice < 0n) {
+    return undefined;
+  }
+  return Number(gasUsed * gasPrice);
 }
 
 export function normalizeReceipt(receipt: any) {

@@ -394,7 +394,9 @@ describe('P2P Service', function() {
     await addReceiptsToTxs(web3 as any, txs, { concurrency: 2, retries: 1, retryDelayMs: 0 });
 
     expect(request.calledOnce).to.equal(true);
-    expect(web3.eth.getTransactionReceipt.callCount).to.equal(2);
+    // The batch result is used for 0x0; only the missing 0x1 is fetched individually.
+    expect(web3.eth.getTransactionReceipt.callCount).to.equal(1);
+    expect(web3.eth.getTransactionReceipt.firstCall.args[0]).to.equal('0x1');
     expect(txs.map(tx => tx.receipt.transactionHash)).to.deep.equal(['0x0', '0x1']);
   });
 
@@ -440,19 +442,39 @@ describe('P2P Service', function() {
     ]);
   });
 
-  it('should fail explicitly when an EVM receipt remains missing', async function() {
-    const txs = [{ txid: '0xmissing', gasPrice: 50 }] as any[];
+  it('should continue without a receipt when one remains missing', async function() {
+    const txs = [
+      { txid: '0xmissing', gasPrice: 50 },
+      { txid: '0xpresent', gasPrice: 50 }
+    ] as any[];
     const web3 = {
       eth: {
-        getTransactionReceipt: sandbox.stub().resolves(null)
+        getTransactionReceipt: sandbox.stub().callsFake(async (txid: string) => {
+          if (txid === '0xmissing') {
+            return null;
+          }
+          return {
+            status: true,
+            transactionHash: txid,
+            transactionIndex: 0,
+            blockHash: '0xblock',
+            blockNumber: 1,
+            cumulativeGasUsed: 1,
+            gasUsed: 10,
+            effectiveGasPrice: 20,
+            logs: []
+          };
+        })
       }
     };
 
-    try {
-      await addReceiptsToTxs(web3 as any, txs, { concurrency: 1, retries: 1, retryDelayMs: 0 });
-      expect.fail('expected addReceiptsToTxs to throw');
-    } catch (err: any) {
-      expect(err.message).to.include('Unable to fetch receipt for confirmed tx 0xmissing after 2 attempts');
-    }
+    // Block processing must not stall over one receipt: the tx is left without one
+    // (receiptLogEffectsProcessed unset) and repaired later by backfill or on read.
+    await addReceiptsToTxs(web3 as any, txs, { concurrency: 1, retries: 1, retryDelayMs: 0 });
+
+    expect(txs[0].receipt).to.equal(undefined);
+    expect(txs[1].receipt.transactionHash).to.equal('0xpresent');
+    // The missing receipt was still retried before being given up on.
+    expect(web3.eth.getTransactionReceipt.callCount).to.equal(3);
   });
 });

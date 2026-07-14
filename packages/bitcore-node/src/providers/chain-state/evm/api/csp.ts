@@ -25,7 +25,7 @@ import { ERC20Abi } from '../abi/erc20';
 import { MultisendAbi } from '../abi/multisend';
 import { EVMBlockStorage } from '../models/block';
 import { EVMTransactionStorage } from '../models/transaction';
-import { normalizeReceipt } from '../p2p/receipts';
+import { computeReceiptFee, normalizeReceipt } from '../p2p/receipts';
 import { EVMTransactionJSON, IEVMBlock, IEVMTransaction, IEVMTransactionInProcess } from '../types';
 import { AaveAccountData, AaveReserveData, AaveReserveTokensAddresses, AaveV2AccountData, AaveV3AccountData, AaveVersion, getAavePoolAddress } from './aave';
 import { Erc20RelatedFilterTransform } from './erc20Transform';
@@ -448,7 +448,7 @@ export class BaseEVMStateProvider extends InternalStateProvider implements IChai
         return tx;
       }
       tx.receipt = receipt as any;
-      const fee = this.getReceiptFee(tx, receipt);
+      const fee = computeReceiptFee(receipt, tx.gasPrice);
       if (fee !== undefined) {
         tx.fee = fee;
         update.fee = fee;
@@ -468,22 +468,6 @@ export class BaseEVMStateProvider extends InternalStateProvider implements IChai
       await EVMTransactionStorage.collection.updateOne({ _id: tx._id }, { $set: update });
     }
     return tx;
-  }
-
-  getReceiptFee(tx: Pick<IEVMTransaction, 'gasPrice'>, receipt: any) {
-    const gasUsed = this.toOptionalBigInt(receipt.gasUsed);
-    const gasPrice = this.toOptionalBigInt(receipt.effectiveGasPrice ?? tx.gasPrice);
-    if (gasUsed === undefined || gasPrice === undefined || gasUsed < 0n || gasPrice < 0n) {
-      return;
-    }
-    return Number(gasUsed * gasPrice);
-  }
-
-  toOptionalBigInt(value: any): bigint | undefined {
-    if (value === undefined || value === null || value === '') {
-      return;
-    }
-    return BigInt(value);
   }
 
   populateEffects(tx: MongoBound<IEVMTransaction>) {

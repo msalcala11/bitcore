@@ -69,19 +69,9 @@ async function processBlockTxs(getWeb3, blockTxs) {
   // Legacy rows that still have their receipt logs stored don't need an RPC round trip.
   const txsNeedingReceipts = blockTxs.filter(tx => !Array.isArray(tx.receipt?.logs));
   if (txsNeedingReceipts.length) {
-    const web3 = await getWeb3();
-    try {
-      await addReceiptsToTxs(web3, txsNeedingReceipts);
-    } catch {
-      // One unfetchable receipt shouldn't poison the whole block: the batch call mutates
-      // txs as it goes, so retry just the stragglers individually and process whatever
-      // succeeded. Anything still missing stays in the repair query for the next run.
-      for (const tx of txsNeedingReceipts.filter(tx => !Array.isArray(tx.receipt?.logs))) {
-        try {
-          await addReceiptsToTxs(web3, [tx]);
-        } catch {/* left for the next run */}
-      }
-    }
+    // Tolerant of unfetchable receipts: those txs come back without one, are excluded
+    // from readyTxs below, and stay in the repair query for the next run.
+    await addReceiptsToTxs(await getWeb3(), txsNeedingReceipts);
   }
   const readyTxs = blockTxs.filter(tx => Array.isArray(tx.receipt?.logs));
   const ops = [];
