@@ -65,14 +65,27 @@ if (startHeight < 1 || endHeight < startHeight) {
   usage('Invalid height range.');
 }
 
-async function processBlockTxs(web3, blockTxs) {
+async function processBlockTxs(getWeb3, blockTxs) {
   // Legacy rows that still have their receipt logs stored don't need an RPC round trip.
   const txsNeedingReceipts = blockTxs.filter(tx => !Array.isArray(tx.receipt?.logs));
   if (txsNeedingReceipts.length) {
-    await addReceiptsToTxs(web3, txsNeedingReceipts); // throws if any receipt is unavailable; caller skips the block
+    const web3 = await getWeb3();
+    try {
+      await addReceiptsToTxs(web3, txsNeedingReceipts);
+    } catch {
+      // One unfetchable receipt shouldn't poison the whole block: the batch call mutates
+      // txs as it goes, so retry just the stragglers individually and process whatever
+      // succeeded. Anything still missing stays in the repair query for the next run.
+      for (const tx of txsNeedingReceipts.filter(tx => !Array.isArray(tx.receipt?.logs))) {
+        try {
+          await addReceiptsToTxs(web3, [tx]);
+        } catch {/* left for the next run */}
+      }
+    }
   }
+  const readyTxs = blockTxs.filter(tx => Array.isArray(tx.receipt?.logs));
   const ops = [];
-  for (const tx of blockTxs) {
+  for (const tx of readyTxs) {
     // Only includes receiptLogEffectsProcessed when derivation completed, so partially
     // derived txs stay in this script's repair query for the next run.
     const update = EVMTransactionStorage.deriveReceiptLogEffects(tx);
@@ -84,7 +97,7 @@ async function processBlockTxs(web3, blockTxs) {
   if (!dryRun && ops.length) {
     await EVMTransactionStorage.collection.bulkWrite(ops, { ordered: false });
   }
-  return ops.length;
+  return { updated: ops.length, skipped: blockTxs.length - readyTxs.length };
 }
 
 const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
@@ -102,22 +115,32 @@ Storage.start()
       receiptLogEffectsProcessed: { $ne: true }
     };
 
-    const totalCount = await EVMTransactionStorage.collection.countDocuments(query);
-    console.log(`Found ${totalCount} ${chain}:${network} transactions without receipt-log effects.${dryRun ? ' (dry run)' : ''}`);
-    if (!totalCount) {
-      return;
-    }
-
-    if (!skipPrompt) {
+    let totalCount = null;
+    if (skipPrompt) {
+      // No prompt to inform, so skip the extra counting pass over the height range.
+      console.log(`Backfilling ${chain}:${network} transactions without receipt-log effects...${dryRun ? ' (dry run)' : ''}`);
+    } else {
+      totalCount = await EVMTransactionStorage.collection.countDocuments(query);
+      console.log(`Found ${totalCount} ${chain}:${network} transactions without receipt-log effects.${dryRun ? ' (dry run)' : ''}`);
+      if (!totalCount) {
+        return;
+      }
       const ans = await util.promisify(rl.question).call(rl, 'Would you like to continue? (Y/n) ');
       if (ans?.toLowerCase() === 'n') {
         return;
       }
     }
 
-    ({ BaseEVMStateProvider } = await import('../build/src/providers/chain-state/evm/api/csp.js'));
-    const csp = new BaseEVMStateProvider(chain);
-    const { web3 } = await csp.getWeb3(network, { type: 'historical' });
+    // Lazy: a backfill over rows that all still have stored logs needs no RPC at all.
+    let web3;
+    const getWeb3 = async () => {
+      if (!web3) {
+        ({ BaseEVMStateProvider } = await import('../build/src/providers/chain-state/evm/api/csp.js'));
+        const csp = new BaseEVMStateProvider(chain);
+        ({ web3 } = await csp.getWeb3(network, { type: 'historical' }));
+      }
+      return web3;
+    };
 
     const cursor = EVMTransactionStorage.collection
       .find(query)
@@ -126,7 +149,7 @@ Storage.start()
 
     let countUpdated = 0;
     let countSeen = 0;
-    let countFailedBlocks = 0;
+    let countSkippedTxs = 0;
     let blockTxs = [];
 
     const flushBlock = async () => {
@@ -135,9 +158,14 @@ Storage.start()
       }
       const blockHeight = blockTxs[0].blockHeight;
       try {
-        countUpdated += await processBlockTxs(web3, blockTxs);
+        const { updated, skipped } = await processBlockTxs(getWeb3, blockTxs);
+        countUpdated += updated;
+        if (skipped) {
+          countSkippedTxs += skipped;
+          console.error(`\n${skipped} tx(s) in block ${blockHeight} have unfetchable receipts (will retry on next run)`);
+        }
       } catch (err) {
-        countFailedBlocks++;
+        countSkippedTxs += blockTxs.length;
         console.error(`\nFailed to backfill block ${blockHeight} (will retry on next run): ${err.message || err}`);
       }
       blockTxs = [];
@@ -153,8 +181,8 @@ Storage.start()
       blockTxs.push(tx);
       countSeen++;
       if (countSeen % 100 === 0 || countSeen === totalCount) {
-        const percent = (countSeen / totalCount * 100).toFixed(2);
-        process.stdout.write(`Processing block ${tx.blockHeight} (${percent}%) -- (${countUpdated} txs ${dryRun ? 'would be ' : ''}updated)...        \r`);
+        const percent = totalCount ? ` (${(countSeen / totalCount * 100).toFixed(2)}%)` : '';
+        process.stdout.write(`Processing block ${tx.blockHeight}${percent} -- (${countUpdated} txs ${dryRun ? 'would be ' : ''}updated)...        \r`);
       }
     }
     if (!shutdown) {
@@ -162,8 +190,8 @@ Storage.start()
     }
 
     console.log(`\n${dryRun ? 'Would have updated' : 'Updated'} ${countUpdated} of ${countSeen} transactions.`);
-    if (countFailedBlocks) {
-      console.log(`${countFailedBlocks} block(s) failed and were left unprocessed; re-run to retry them.`);
+    if (countSkippedTxs) {
+      console.log(`${countSkippedTxs} tx(s) were left unprocessed; re-run to retry them.`);
     }
   })
   .catch(console.error)
