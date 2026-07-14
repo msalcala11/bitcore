@@ -65,29 +65,17 @@ if (startHeight < 1 || endHeight < startHeight) {
   usage('Invalid height range.');
 }
 
-function deriveEffects(tx) {
-  if (EVMTransactionStorage.isFailedReceipt(tx.receipt)) {
-    return [];
-  }
-  if (tx.effects?.length) {
-    const effects = [...tx.effects];
-    EVMTransactionStorage.addReceiptLogEffects(tx, effects);
-    return effects;
-  }
-  return EVMTransactionStorage.getEffects(tx);
-}
-
 async function processBlockTxs(web3, blockTxs) {
-  await addReceiptsToTxs(web3, blockTxs); // throws if any receipt is unavailable; caller skips the block
+  // Legacy rows that still have their receipt logs stored don't need an RPC round trip.
+  const txsNeedingReceipts = blockTxs.filter(tx => !Array.isArray(tx.receipt?.logs));
+  if (txsNeedingReceipts.length) {
+    await addReceiptsToTxs(web3, txsNeedingReceipts); // throws if any receipt is unavailable; caller skips the block
+  }
   const ops = [];
   for (const tx of blockTxs) {
-    tx.effects = deriveEffects(tx);
-    EVMTransactionStorage.stripReceiptLogs(tx);
-    const update = {
-      effects: tx.effects,
-      receipt: tx.receipt,
-      receiptLogEffectsProcessed: true
-    };
+    // Only includes receiptLogEffectsProcessed when derivation completed, so partially
+    // derived txs stay in this script's repair query for the next run.
+    const update = EVMTransactionStorage.deriveReceiptLogEffects(tx);
     if (tx.fee !== undefined) {
       update.fee = tx.fee;
     }

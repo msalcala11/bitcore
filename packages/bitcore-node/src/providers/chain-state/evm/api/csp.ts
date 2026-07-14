@@ -441,45 +441,31 @@ export class BaseEVMStateProvider extends InternalStateProvider implements IChai
   }
 
   async populateReceipt(tx: MongoBound<IEVMTransaction>) {
+    const update = {} as Partial<IEVMTransaction>;
     if (!tx.receipt) {
       const receipt = await this.getReceipt(tx.network, tx.txid);
-      if (receipt) {
-        const update = {} as Partial<IEVMTransaction>;
-        tx.receipt = receipt as any;
-        const fee = this.getReceiptFee(tx, receipt);
-        if (fee !== undefined) {
-          tx.fee = fee;
-          update.fee = fee;
-        }
-        // Derive receipt-log effects while the logs are in hand. Stored receipts have their
-        // logs stripped, so this is the only chance to reconcile effects against them.
-        const hadLogs = Array.isArray(tx.receipt!.logs);
-        const failed = EVMTransactionStorage.isFailedReceipt(tx.receipt);
-        if (failed) {
-          tx.effects = [];
-        } else if (tx.effects?.length) {
-          const effects = [...tx.effects];
-          EVMTransactionStorage.addReceiptLogEffects(tx as IEVMTransactionInProcess, effects);
-          tx.effects = effects;
-        } else {
-          tx.effects = EVMTransactionStorage.getEffects(tx as IEVMTransactionInProcess);
-        }
-        update.effects = tx.effects;
-        if (failed || hadLogs) {
-          tx.receiptLogEffectsProcessed = true;
-          update.receiptLogEffectsProcessed = true;
-        }
-        // logs can be very large and are not currently needed for any use case in this codebase.
-        EVMTransactionStorage.stripReceiptLogs(tx as IEVMTransactionInProcess);
-        update.receipt = tx.receipt;
-        if (tx._id) {
-          await EVMTransactionStorage.collection.updateOne({ _id: tx._id }, { $set: update });
-        }
+      if (!receipt) {
+        return tx;
       }
-    } else if (tx.receipt.logs) {
-      // Rows that already have a receipt are served as stored; historical rows missing
-      // receipt-log effects are upgraded by scripts/backfillEvmReceiptLogEffects.js, not here.
-      EVMTransactionStorage.stripReceiptLogs(tx as IEVMTransactionInProcess);
+      tx.receipt = receipt as any;
+      const fee = this.getReceiptFee(tx, receipt);
+      if (fee !== undefined) {
+        tx.fee = fee;
+        update.fee = fee;
+      }
+      // Derive receipt-log effects while the logs are in hand.
+      Object.assign(update, EVMTransactionStorage.deriveReceiptLogEffects(tx as IEVMTransactionInProcess));
+    } else if (Array.isArray(tx.receipt.logs)) {
+      // Legacy rows persisted full receipts. Derive effects from the stored logs (no RPC
+      // needed) and persist the stripped receipt so the logs stop shipping on every read.
+      Object.assign(update, EVMTransactionStorage.deriveReceiptLogEffects(tx as IEVMTransactionInProcess));
+    } else {
+      // Stored, already-stripped receipt: served as-is; historical rows missing receipt-log
+      // effects are upgraded by scripts/backfillEvmReceiptLogEffects.js, not here.
+      return tx;
+    }
+    if (tx._id) {
+      await EVMTransactionStorage.collection.updateOne({ _id: tx._id }, { $set: update });
     }
     return tx;
   }

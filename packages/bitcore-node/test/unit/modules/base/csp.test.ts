@@ -781,7 +781,7 @@ describe('BaseEVMStateProvider: populateReceipt', function() {
     expect(updateOne.called).to.equal(false);
   });
 
-  it('does not refetch receipts with known-empty logs', async function() {
+  it('derives effects from stored empty receipt logs without refetching', async function() {
     const updateOne = sandbox.stub().resolves();
     sandbox.stub(EVMTransactionStorage, 'collection').get(() => ({ updateOne }));
     const provider = new BaseEVMStateProvider('ETH');
@@ -815,7 +815,46 @@ describe('BaseEVMStateProvider: populateReceipt', function() {
 
     expect(getReceipt.called).to.equal(false);
     expect(tx.receipt.logs).to.equal(undefined);
-    expect(updateOne.called).to.equal(false);
+    expect(tx.receiptLogEffectsProcessed).to.equal(true);
+    expect(updateOne.firstCall.args[1].$set).to.deep.equal({
+      effects: [],
+      receipt: tx.receipt,
+      receiptLogEffectsProcessed: true
+    });
+  });
+
+  it('derives ERC20 effects from stored receipt logs without refetching', async function() {
+    const updateOne = sandbox.stub().resolves();
+    sandbox.stub(EVMTransactionStorage, 'collection').get(() => ({ updateOne }));
+    const provider = new BaseEVMStateProvider('ETH');
+    const getReceipt = sandbox.stub(provider, 'getReceipt').rejects(new Error('should not refetch'));
+    const tx = {
+      _id: new ObjectId(),
+      txid,
+      chain: 'ETH',
+      network: 'mainnet',
+      from: '0x963737C550E70FFe4D59464542a28604eDb2eF9a',
+      to: sourceAddress,
+      value: 0,
+      gasPrice: 20,
+      gasLimit: 1500000,
+      nonce: 79903,
+      transactionIndex: 0,
+      receipt: receiptWithTransferLog(),
+      effects: []
+    } as any;
+
+    await provider.populateReceipt(tx);
+
+    const expectedEffect = expectedTransferEffect();
+    expect(getReceipt.called).to.equal(false);
+    expect(tx.effects).to.deep.equal([expectedEffect]);
+    expect(tx.receipt.logs).to.equal(undefined);
+    expect(updateOne.firstCall.args[1].$set).to.deep.equal({
+      effects: [expectedEffect],
+      receipt: tx.receipt,
+      receiptLogEffectsProcessed: true
+    });
   });
 
   it('does not refetch or recompute effects for already-processed receipts on re-read', async function() {
@@ -1015,7 +1054,7 @@ describe('PopulateReceiptTransform', function() {
     expect(rows[1].effects).to.deep.equal([transferEffect]);
   });
 
-  it('enriches each row through populateReceipt', async function() {
+  it('reuses successful receipt enrichment for duplicate txid rows', async function() {
     const populateReceipt = sandbox.stub().callsFake(async tx => ({
       ...tx,
       fee: 2000,
@@ -1037,9 +1076,11 @@ describe('PopulateReceiptTransform', function() {
     stream.end();
     await done;
 
-    expect(populateReceipt.callCount).to.equal(2);
+    expect(populateReceipt.callCount).to.equal(1);
     expect(rows.map(row => row.value)).to.deep.equal(['100', '200']);
     expect(rows.map(row => row.effects)).to.deep.equal([[transferEffect], [transferEffect]]);
+    expect(rows[0].effects).to.not.equal(rows[1].effects);
+    expect(rows[0].receipt).to.not.equal(rows[1].receipt);
     expect(rows.map(row => row.receiptLogEffectsProcessed)).to.deep.equal([true, true]);
   });
 });

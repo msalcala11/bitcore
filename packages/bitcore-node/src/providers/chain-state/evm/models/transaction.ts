@@ -484,6 +484,40 @@ export class EVMTransactionModel extends BaseTransaction<IEVMTransaction> {
     return effect.type === 'ERC20:transfer' && !!effect.contractAddress;
   }
 
+  /**
+   * Derives effects for a tx whose receipt (with logs) is in hand, strips the logs, and
+   * returns the fields to persist. receiptLogEffectsProcessed is only included when
+   * derivation actually completed against a logs array (or the receipt failed), so
+   * partially-derived txs stay eligible for the backfill's repair query.
+   * @param tx A tx with a receipt attached; mutated in place
+   * @returns The update fields to $set
+   */
+  deriveReceiptLogEffects(tx: IEVMTransactionInProcess): Partial<IEVMTransaction> {
+    const update: Partial<IEVMTransaction> = {};
+    if (this.isFailedReceipt(tx.receipt)) {
+      tx.effects = [];
+      tx.receiptLogEffectsProcessed = true;
+    } else if (tx.effects?.length) {
+      const effects = [...tx.effects];
+      this.addReceiptLogEffects(tx, effects);
+      tx.effects = effects;
+      if (Array.isArray(tx.receipt?.logs)) {
+        tx.receiptLogEffectsProcessed = true;
+      }
+    } else {
+      // getEffects sets receiptLogEffectsProcessed itself only when derivation completes
+      tx.effects = this.getEffects(tx);
+    }
+    update.effects = tx.effects;
+    if (tx.receiptLogEffectsProcessed) {
+      update.receiptLogEffectsProcessed = true;
+    }
+    // logs can be very large and are not currently needed for any use case in this codebase.
+    this.stripReceiptLogs(tx);
+    update.receipt = tx.receipt;
+    return update;
+  }
+
   isFailedReceipt(receipt?: { status?: boolean | number | string | bigint }) {
     const status = receipt?.status;
     return status === false || status === 0 || status === 0n || status === '0' || status === '0x0';
