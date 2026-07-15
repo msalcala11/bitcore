@@ -8,7 +8,8 @@ import { CacheStorage } from '../../../models/cache';
 import { CoinEvent } from '../../../models/events';
 import { WalletAddressStorage } from '../../../models/walletAddress';
 import { BaseEVMStateProvider, BuildWalletTxsStreamParams } from '../../../providers/chain-state/evm/api/csp';
-import { TxidDedupeTransform } from '../../../providers/chain-state/evm/api/transform';
+import { PopulateReceiptTransform } from '../../../providers/chain-state/evm/api/populateReceiptTransform';
+import { TokenHistoryExpansionTransform } from '../../../providers/chain-state/evm/api/transform';
 import { EVMBlockStorage } from '../../../providers/chain-state/evm/models/block';
 import { EVMTransactionStorage } from '../../../providers/chain-state/evm/models/transaction';
 import { EVMTransactionJSON, IEVMBlock, IEVMTransactionTransformed } from '../../../providers/chain-state/evm/types';
@@ -213,12 +214,18 @@ export class MoralisStateProvider extends BaseEVMStateProvider {
       this._addAddressToSubscription({ chainId, address })
         .catch(e => logger.warn(`Failed to add address to ${this.chain}:${network} Moralis subscription: %o`, e));
     }
-    transactionStream = transactionStream
-      .eventPipe(populateReceipt)
-      .eventPipe(populateEffects);
-
     if (args.tokenAddress) {
-      transactionStream = transactionStream.eventPipe(new TxidDedupeTransform(walletAddresses));
+      // Token history: pin one enrichment mode per txid, then expand enriched rows one
+      // row per effect (mirroring the local-DB Erc20RelatedFilterTransform splitter).
+      // Raw-pinned rows serve their provider-supplied amounts instead.
+      transactionStream = transactionStream
+        .eventPipe(new PopulateReceiptTransform(this, { walletAddresses, tokenAddress: args.tokenAddress }))
+        .eventPipe(populateEffects)
+        .eventPipe(new TokenHistoryExpansionTransform(walletAddresses, args.tokenAddress));
+    } else {
+      transactionStream = transactionStream
+        .eventPipe(populateReceipt)
+        .eventPipe(populateEffects);
     }
     return transactionStream;
   }

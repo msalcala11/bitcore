@@ -25,7 +25,7 @@ import { ERC20Abi } from '../abi/erc20';
 import { MultisendAbi } from '../abi/multisend';
 import { EVMBlockStorage } from '../models/block';
 import { EVMTransactionStorage } from '../models/transaction';
-import { computeReceiptFee, normalizeReceipt } from '../p2p/receipts';
+import { computeReceiptFee, getReceiptWithRetry, normalizeReceipt } from '../p2p/receipts';
 import { EVMTransactionJSON, IEVMBlock, IEVMTransaction, IEVMTransactionInProcess } from '../types';
 import { AaveAccountData, AaveReserveData, AaveReserveTokensAddresses, AaveV2AccountData, AaveV3AccountData, AaveVersion, getAavePoolAddress } from './aave';
 import { Erc20RelatedFilterTransform } from './erc20Transform';
@@ -434,16 +434,24 @@ export class BaseEVMStateProvider extends InternalStateProvider implements IChai
     return EVMBlockStorage.getLocalTip({ chain, network });
   }
 
-  async getReceipt(network: string, txid: string) {
+  async getReceipt(network: string, txid: string, opts?: { retries: number; retryDelayMs?: number }) {
     const { web3 } = await this.getWeb3(network, { type: 'historical' });
+    if (opts?.retries) {
+      try {
+        return normalizeReceipt(await getReceiptWithRetry(web3, txid, { retries: opts.retries, retryDelayMs: opts.retryDelayMs ?? 250 }));
+      } catch {
+        // Retries exhausted — treated uniformly as a missing receipt by callers.
+        return null;
+      }
+    }
     const receipt = await web3.eth.getTransactionReceipt(txid);
     return normalizeReceipt(receipt);
   }
 
-  async populateReceipt(tx: MongoBound<IEVMTransaction>) {
+  async populateReceipt(tx: MongoBound<IEVMTransaction>, opts?: { retries: number; retryDelayMs?: number }) {
     const update = {} as Partial<IEVMTransaction>;
     if (!tx.receipt) {
-      const receipt = await this.getReceipt(tx.network, tx.txid);
+      const receipt = await this.getReceipt(tx.network, tx.txid, opts);
       if (!receipt) {
         return tx;
       }

@@ -197,6 +197,7 @@ export type IEVMTransactionTransformed = IEVMTransactionInProcess & {
   initialFrom?: string;
   callStack?: string;
   externalCategory?: string; // from external provider
+  tokenHistoryMode?: 'expand' | 'raw' | 'drop'; // per-request serve mode, see PopulateReceiptTransform
 };
 
 export interface TransactionJSON {

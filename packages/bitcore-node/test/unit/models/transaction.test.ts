@@ -10,7 +10,9 @@ import { Gnosis } from '../../../src/providers/chain-state/evm/api/gnosis';
 import { Erc20RelatedFilterTransform } from '../../../src/providers/chain-state/evm/api/erc20Transform';
 import { MultisigRelatedFilterTransform } from '../../../src/providers/chain-state/evm/api/multisigTransform';
 import { Config } from '../../../src/services/config';
-import { EVMListTransactionsStream, TxidDedupeTransform } from '../../../src/providers/chain-state/evm/api/transform';
+import { EVMListTransactionsStream, TokenHistoryExpansionTransform } from '../../../src/providers/chain-state/evm/api/transform';
+import { PopulateReceiptTransform } from '../../../src/providers/chain-state/evm/api/populateReceiptTransform';
+import logger from '../../../src/logger';
 import { InternalTxRelatedFilterTransform } from '../../../src/providers/chain-state/evm/api/internalTxTransform';
 import { EVMTransactionStorage } from '../../../src/providers/chain-state/evm/models/transaction';
 import { WalletAddressStorage } from '../../../src/models/walletAddress';
@@ -861,81 +863,350 @@ describe('Transaction Model', function() {
         expect(rows[0].satoshis).to.equal('500');
       });
 
-      it('should dedupe external token rows by txid after receipt enrichment', async () => {
+      describe('external token history serve modes', () => {
         const walletAddress = Web3.utils.toChecksumAddress('0xa91cfe0dcad33f36f3c9428d48eccbd8a71951b4');
         const counterpartyAddress = Web3.utils.toChecksumAddress('0x8489935991b0eac9ce9e9330d35b9734ecdf2cad');
-        const effect = {
-          to: counterpartyAddress,
+        const otherAddress = Web3.utils.toChecksumAddress('0x963737c550e70ffe4d59464542a28604edb2ef9a');
+        const walletSendEffect = (amount: string, to = counterpartyAddress) => ({
+          to,
           from: walletAddress,
-          amount: '100',
-          type: 'ERC20:transfer',
+          amount,
+          type: 'ERC20:transfer' as const,
           contractAddress: busdToken,
-          callStack: 'log:7'
-        };
-        const rows = new Array<any>();
-        const stream = new TxidDedupeTransform([walletAddress]);
-        const done = new Promise<void>((resolve, reject) => {
-          stream
-            .on('data', tx => rows.push(tx))
-            .on('error', reject)
-            .on('end', resolve);
+          callStack: `log:${amount}`
         });
-        stream.write({ txid: '0xbatch', from: walletAddress, to: counterpartyAddress, value: '100', effects: [effect], receiptLogEffectsProcessed: true });
-        stream.write({ txid: '0xbatch', from: walletAddress, to: counterpartyAddress, value: '200', effects: [effect], receiptLogEffectsProcessed: true });
-        stream.write({ txid: '0xbatch', from: counterpartyAddress, to: walletAddress, value: '5', effects: [{ ...effect, from: counterpartyAddress, to: walletAddress }], receiptLogEffectsProcessed: true });
-        stream.end();
-        await done;
-
-        expect(rows.map(row => row.value)).to.deep.equal(['100', '5']);
-      });
-
-      it('should evict the oldest dedupe keys past the cap', async () => {
-        const walletAddress = Web3.utils.toChecksumAddress('0xa91cfe0dcad33f36f3c9428d48eccbd8a71951b4');
-        const counterpartyAddress = Web3.utils.toChecksumAddress('0x8489935991b0eac9ce9e9330d35b9734ecdf2cad');
-        const effect = {
-          type: 'ERC20:transfer',
-          to: counterpartyAddress,
+        const nonWalletEffect = (amount: string) => ({
+          to: otherAddress,
+          from: counterpartyAddress,
+          amount,
+          type: 'ERC20:transfer' as const,
+          contractAddress: busdToken,
+          callStack: `log:x${amount}`
+        });
+        const providerRow = (txid: string, value: string, extra: any = {}) => ({
+          txid,
+          chain: 'ETH',
+          network: 'mainnet',
           from: walletAddress,
-          amount: '100',
-          contractAddress: Web3.utils.toChecksumAddress('0x4fabb145d64652a948d72533023f6e7a623c7c53'),
-          callStack: 'log:7'
+          to: counterpartyAddress,
+          value,
+          effects: [],
+          ...extra
+        });
+        const enrichmentOf = (effects: Array<any>) => async (tx: any) => ({
+          ...tx,
+          fee: 2000,
+          receipt: { status: true },
+          effects,
+          receiptLogEffectsProcessed: true
+        });
+        const collectRows = async (stream: any, source: any, rows: Array<any>) => {
+          const done = new Promise<void>((resolve, reject) => {
+            stream
+              .on('data', (tx: any) => rows.push(tx))
+              .on('error', reject)
+              .on('end', resolve);
+          });
+          return { write: (tx: any) => source.write(tx), end: async () => { source.end(); await done; } };
         };
-        const rows = new Array<any>();
-        const stream = new TxidDedupeTransform([walletAddress], 1);
-        const done = new Promise<void>((resolve, reject) => {
-          stream
-            .on('data', tx => rows.push(tx))
-            .on('error', reject)
-            .on('end', resolve);
+        describe('PopulateReceiptTransform (token mode)', () => {
+          it('should expand the first enriched row and drop its duplicates', async () => {
+            const populateReceipt = sandbox.stub().callsFake(enrichmentOf([walletSendEffect('100')]));
+            const populate = new PopulateReceiptTransform({ populateReceipt } as any, { walletAddresses: [walletAddress], tokenAddress: busdToken });
+            const rows = new Array<any>();
+            const collector = await collectRows(populate, populate, rows);
+            collector.write(providerRow('0xbatch', '100'));
+            collector.write(providerRow('0xbatch', '200'));
+            await collector.end();
+
+            expect(populateReceipt.callCount).to.equal(1);
+            expect(rows.map(row => row.tokenHistoryMode)).to.deep.equal(['expand', 'drop']);
+          });
+
+          it('should pin a txid raw after a failed enrichment instead of mixing modes', async () => {
+            const populateReceipt = sandbox.stub();
+            populateReceipt.onFirstCall().rejects(new Error('rate limited'));
+            populateReceipt.onSecondCall().callsFake(enrichmentOf([walletSendEffect('100')]));
+            const populate = new PopulateReceiptTransform({ populateReceipt } as any, { walletAddresses: [walletAddress], tokenAddress: busdToken });
+            const rows = new Array<any>();
+            const collector = await collectRows(populate, populate, rows);
+            collector.write(providerRow('0xbatch', '100'));
+            collector.write(providerRow('0xbatch', '200'));
+            await collector.end();
+
+            // The duplicate must NOT retry: a raw row already passed downstream, so a
+            // late success would double-count the first leg.
+            expect(populateReceipt.callCount).to.equal(1);
+            expect(rows.map(row => row.tokenHistoryMode)).to.deep.equal(['raw', 'raw']);
+            expect(rows.map(row => row.value)).to.deep.equal(['100', '200']);
+          });
+
+          it('should pin raw when enrichment finds no wallet-relevant token effects', async () => {
+            const populateReceipt = sandbox.stub().callsFake(enrichmentOf([nonWalletEffect('7')]));
+            const populate = new PopulateReceiptTransform({ populateReceipt } as any, { walletAddresses: [walletAddress], tokenAddress: busdToken });
+            const rows = new Array<any>();
+            const collector = await collectRows(populate, populate, rows);
+            collector.write(providerRow('0xbatch', '100'));
+            collector.write(providerRow('0xbatch', '200'));
+            await collector.end();
+
+            expect(populateReceipt.callCount).to.equal(1);
+            expect(rows.map(row => row.tokenHistoryMode)).to.deep.equal(['raw', 'raw']);
+            // Metadata still clones onto the duplicate; the arithmetic stays value-based.
+            expect(rows.map(row => row.fee)).to.deep.equal([2000, 2000]);
+            expect(rows.map(row => row.value)).to.deep.equal(['100', '200']);
+          });
+
+          it('should pass retry options through to populateReceipt', async () => {
+            const populateReceipt = sandbox.stub().callsFake(enrichmentOf([walletSendEffect('100')]));
+            const populate = new PopulateReceiptTransform({ populateReceipt } as any, { walletAddresses: [walletAddress], tokenAddress: busdToken });
+            const rows = new Array<any>();
+            const collector = await collectRows(populate, populate, rows);
+            collector.write(providerRow('0xbatch', '100'));
+            await collector.end();
+
+            expect(populateReceipt.firstCall.args[1]).to.deep.equal({ retries: 2, retryDelayMs: 250 });
+          });
+
+          it('should keep a raw mode pinned when its enrichment snapshot is evicted', async () => {
+            const populateReceipt = sandbox.stub().callsFake(enrichmentOf([nonWalletEffect('7')]));
+            const populate = new PopulateReceiptTransform(
+              { populateReceipt } as any,
+              { walletAddresses: [walletAddress], tokenAddress: busdToken },
+              1 // snapshot cache holds a single entry
+            );
+            const rows = new Array<any>();
+            const collector = await collectRows(populate, populate, rows);
+            collector.write(providerRow('0xaaa', '100'));
+            collector.write(providerRow('0xbbb', '200')); // evicts 0xaaa's snapshot
+            collector.write(providerRow('0xaaa', '300')); // duplicate: mode intact, no refetch
+            await collector.end();
+
+            expect(populateReceipt.callCount).to.equal(2);
+            expect(rows.map(row => row.tokenHistoryMode)).to.deep.equal(['raw', 'raw', 'raw']);
+            // The evicted snapshot only costs cloned metadata, never the mode.
+            expect(rows.map(row => row.fee)).to.deep.equal([2000, 2000, undefined]);
+          });
+
+          it('should evict the oldest mode records past the cap and warn once', async () => {
+            const warn = sandbox.stub(logger, 'warn');
+            const populateReceipt = sandbox.stub().callsFake(enrichmentOf([walletSendEffect('100')]));
+            const populate = new PopulateReceiptTransform(
+              { populateReceipt } as any,
+              { walletAddresses: [walletAddress], tokenAddress: busdToken, maxModeEntries: 1 }
+            );
+            const rows = new Array<any>();
+            const collector = await collectRows(populate, populate, rows);
+            collector.write(providerRow('0xaaa', '100'));
+            collector.write(providerRow('0xbbb', '200')); // evicts 0xaaa's mode (cap of 1)
+            collector.write(providerRow('0xaaa', '300')); // refetches: the bounded-memory trade-off
+            await collector.end();
+
+            expect(populateReceipt.callCount).to.equal(3);
+            expect(rows.map(row => row.tokenHistoryMode)).to.deep.equal(['expand', 'expand', 'expand']);
+            expect(warn.callCount).to.equal(1);
+          });
+
+          it('should open the breaker after consecutive failures and stop fetching', async () => {
+            const warn = sandbox.stub(logger, 'warn');
+            const populateReceipt = sandbox.stub().rejects(new Error('provider outage'));
+            const populate = new PopulateReceiptTransform(
+              { populateReceipt } as any,
+              { walletAddresses: [walletAddress], tokenAddress: busdToken, breakerThreshold: 2 }
+            );
+            const rows = new Array<any>();
+            const collector = await collectRows(populate, populate, rows);
+            collector.write(providerRow('0xaaa', '100'));
+            collector.write(providerRow('0xbbb', '200'));
+            collector.write(providerRow('0xccc', '300')); // breaker open: no fetch
+            collector.write(providerRow('0xddd', '400'));
+            await collector.end();
+
+            expect(populateReceipt.callCount).to.equal(2);
+            expect(rows.map(row => row.tokenHistoryMode)).to.deep.equal(['raw', 'raw', 'raw', 'raw']);
+            expect(warn.callCount).to.equal(1);
+          });
+
+          it('should reset the breaker counter on a successful fetch', async () => {
+            const populateReceipt = sandbox.stub();
+            populateReceipt.onCall(0).rejects(new Error('outage'));
+            populateReceipt.onCall(1).callsFake(enrichmentOf([walletSendEffect('100')]));
+            populateReceipt.onCall(2).rejects(new Error('outage'));
+            populateReceipt.onCall(3).callsFake(enrichmentOf([walletSendEffect('100')]));
+            const populate = new PopulateReceiptTransform(
+              { populateReceipt } as any,
+              { walletAddresses: [walletAddress], tokenAddress: busdToken, breakerThreshold: 2 }
+            );
+            const rows = new Array<any>();
+            const collector = await collectRows(populate, populate, rows);
+            collector.write(providerRow('0xaaa', '100')); // failure #1
+            collector.write(providerRow('0xbbb', '200')); // success — counter resets
+            collector.write(providerRow('0xccc', '300')); // failure #1 again
+            collector.write(providerRow('0xddd', '400')); // still fetching
+            await collector.end();
+
+            expect(populateReceipt.callCount).to.equal(4);
+            expect(rows.map(row => row.tokenHistoryMode)).to.deep.equal(['raw', 'expand', 'raw', 'expand']);
+          });
+
+          it('should not count mode hits toward or against the breaker', async () => {
+            const populateReceipt = sandbox.stub().rejects(new Error('outage'));
+            const populate = new PopulateReceiptTransform(
+              { populateReceipt } as any,
+              { walletAddresses: [walletAddress], tokenAddress: busdToken, breakerThreshold: 2 }
+            );
+            const rows = new Array<any>();
+            const collector = await collectRows(populate, populate, rows);
+            collector.write(providerRow('0xaaa', '100')); // failure #1
+            collector.write(providerRow('0xaaa', '150')); // mode hit — no effect on counter
+            collector.write(providerRow('0xbbb', '200')); // failure #2 — breaker opens
+            collector.write(providerRow('0xccc', '300')); // no fetch
+            await collector.end();
+
+            expect(populateReceipt.callCount).to.equal(2);
+            expect(rows.map(row => row.tokenHistoryMode)).to.deep.equal(['raw', 'raw', 'raw', 'raw']);
+          });
         });
-        const row = (txid: string, value: string) =>
-          ({ txid, from: walletAddress, to: counterpartyAddress, value, effects: [effect], receiptLogEffectsProcessed: true });
-        stream.write(row('0xaaa', '100'));
-        stream.write(row('0xbbb', '200')); // evicts 0xaaa's key (cap of 1)
-        stream.write(row('0xaaa', '300')); // duplicate passes: the bounded-memory trade-off
-        stream.end();
-        await done;
 
-        expect(rows.map(r => r.value)).to.deep.equal(['100', '200', '300']);
-      });
+        describe('TokenHistoryExpansionTransform', () => {
+          const collectExpansionRows = async (txs: Array<any>) => {
+            const rows = new Array<any>();
+            const stream = new TokenHistoryExpansionTransform([walletAddress], busdToken);
+            const collector = await collectRows(stream, stream, rows);
+            for (const tx of txs) {
+              collector.write(tx);
+            }
+            await collector.end();
+            return rows;
+          };
 
-      it('should not dedupe external token rows when receipt enrichment failed', async () => {
-        const walletAddress = Web3.utils.toChecksumAddress('0xa91cfe0dcad33f36f3c9428d48eccbd8a71951b4');
-        const counterpartyAddress = Web3.utils.toChecksumAddress('0x8489935991b0eac9ce9e9330d35b9734ecdf2cad');
-        const rows = new Array<any>();
-        const stream = new TxidDedupeTransform([walletAddress]);
-        const done = new Promise<void>((resolve, reject) => {
-          stream
-            .on('data', tx => rows.push(tx))
-            .on('error', reject)
-            .on('end', resolve);
+          it('should expand marked rows into one row per wallet-relevant token effect', async () => {
+            const effects = [walletSendEffect('100'), walletSendEffect('200', otherAddress), nonWalletEffect('7')];
+            const rows = await collectExpansionRows([
+              { ...providerRow('0xbatch', '300'), from: otherAddress, effects, receiptLogEffectsProcessed: true, tokenHistoryMode: 'expand' }
+            ]);
+
+            expect(rows.length).to.equal(2);
+            expect(rows.map(row => row.value)).to.deep.equal(['100', '200']);
+            expect(rows.map(row => row.to)).to.deep.equal([counterpartyAddress, otherAddress]);
+            expect(rows.map(row => row.from)).to.deep.equal([walletAddress, walletAddress]);
+            expect(rows.map(row => row.callStack)).to.deep.equal(['log:100', 'log:200']);
+            expect(rows.map(row => row.effects)).to.deep.equal([[effects[0]], [effects[1]]]);
+            // The tx-level sender differed from the effect sender, so it is preserved.
+            expect(rows.map(row => row.initialFrom)).to.deep.equal([otherAddress, otherAddress]);
+          });
+
+          it('should drop marked duplicate rows', async () => {
+            const rows = await collectExpansionRows([
+              { ...providerRow('0xbatch', '100'), effects: [walletSendEffect('100')], receiptLogEffectsProcessed: true, tokenHistoryMode: 'drop' }
+            ]);
+
+            expect(rows.length).to.equal(0);
+          });
+
+          it('should pass raw and unmarked rows through unchanged', async () => {
+            const rows = await collectExpansionRows([
+              { ...providerRow('0xraw', '100'), tokenHistoryMode: 'raw' },
+              providerRow('0xunmarked', '200')
+            ]);
+
+            expect(rows.map(row => row.value)).to.deep.equal(['100', '200']);
+          });
+
+          it('should serve an expand-marked row as a provider row if it has no relevant effects', async () => {
+            const rows = await collectExpansionRows([
+              { ...providerRow('0xodd', '100'), effects: [nonWalletEffect('7')], receiptLogEffectsProcessed: true, tokenHistoryMode: 'expand' }
+            ]);
+
+            expect(rows.map(row => row.value)).to.deep.equal(['100']);
+          });
         });
-        stream.write({ txid: '0xbatch', from: walletAddress, to: counterpartyAddress, value: '100', effects: [] });
-        stream.write({ txid: '0xbatch', from: walletAddress, to: counterpartyAddress, value: '200', effects: [] });
-        stream.end();
-        await done;
 
-        expect(rows.map(row => row.value)).to.deep.equal(['100', '200']);
+        describe('composed token history pipeline', () => {
+          const runComposedPipeline = async (populateReceipt: sinon.SinonStub, txs: Array<any>) => {
+            const populate = new PopulateReceiptTransform({ populateReceipt } as any, {
+              walletAddresses: [walletAddress],
+              tokenAddress: busdToken
+            });
+            const rows = new Array<any>();
+            const stream = populate
+              .pipe(new TokenHistoryExpansionTransform([walletAddress], busdToken))
+              .pipe(new EVMListTransactionsStream([walletAddress], busdToken));
+            const collector = await collectRows(stream, populate, rows);
+            for (const tx of txs) {
+              collector.write(tx);
+            }
+            await collector.end();
+            return rows.map(chunk => JSON.parse(chunk.toString()));
+          };
+
+          it('should expand a batch transfer into per-recipient send rows', async () => {
+            const populateReceipt = sandbox.stub().callsFake(enrichmentOf([
+              walletSendEffect('100'),
+              walletSendEffect('200', otherAddress)
+            ]));
+            const rows = await runComposedPipeline(populateReceipt, [
+              providerRow('0xbatch', '100'),
+              providerRow('0xbatch', '200', { to: otherAddress })
+            ]);
+
+            expect(rows.length).to.equal(2);
+            expect(rows.map(row => row.category)).to.deep.equal(['send', 'send']);
+            expect(rows.map(row => row.satoshis)).to.deep.equal(['-100', '-200']);
+            expect(rows.map(row => row.address)).to.deep.equal([counterpartyAddress, otherAddress]);
+          });
+
+          it('should emit both legs of a mixed-direction tx from one enriched row', async () => {
+            const populateReceipt = sandbox.stub().callsFake(enrichmentOf([
+              walletSendEffect('100'),
+              { ...nonWalletEffect('50'), to: walletAddress }
+            ]));
+            const rows = await runComposedPipeline(populateReceipt, [
+              providerRow('0xswap', '100')
+            ]);
+
+            expect(rows.map(row => row.category)).to.deep.equal(['send', 'receive']);
+            expect(rows.map(row => row.satoshis)).to.deep.equal(['-100', '50']);
+          });
+
+          it('should recover legs the provider never reported', async () => {
+            const populateReceipt = sandbox.stub().callsFake(enrichmentOf([
+              { ...nonWalletEffect('75'), to: walletAddress },
+              { ...nonWalletEffect('25'), to: walletAddress, callStack: 'log:25' }
+            ]));
+            // The provider reported only one receive; the receipt shows two.
+            const rows = await runComposedPipeline(populateReceipt, [
+              providerRow('0xmissing', '75', { from: counterpartyAddress, to: walletAddress })
+            ]);
+
+            expect(rows.map(row => row.category)).to.deep.equal(['receive', 'receive']);
+            expect(rows.map(row => row.satoshis)).to.deep.equal(['75', '25']);
+          });
+
+          it('should serve provider amounts for raw-pinned rows despite cloned effects', async () => {
+            // Gate failure: the receipt parsed, but none of its token effects involve the
+            // wallet. Cloned effects must stay inert — amounts come from provider values.
+            const populateReceipt = sandbox.stub().callsFake(enrichmentOf([nonWalletEffect('7')]));
+            const rows = await runComposedPipeline(populateReceipt, [
+              providerRow('0xopaque', '100'),
+              providerRow('0xopaque', '200', { to: otherAddress })
+            ]);
+
+            expect(rows.map(row => row.category)).to.deep.equal(['send', 'send']);
+            expect(rows.map(row => row.satoshis)).to.deep.equal(['-100', '-200']);
+          });
+
+          it('should serve provider rows when enrichment fails outright', async () => {
+            const populateReceipt = sandbox.stub().rejects(new Error('outage'));
+            const rows = await runComposedPipeline(populateReceipt, [
+              providerRow('0xdown', '100'),
+              providerRow('0xdown', '200', { to: otherAddress })
+            ]);
+
+            expect(rows.map(row => row.category)).to.deep.equal(['send', 'send']);
+            expect(rows.map(row => row.satoshis)).to.deep.equal(['-100', '-200']);
+          });
+        });
       });
 
       it('should emit relayer-initiated token self-transfers as moves', async () => {

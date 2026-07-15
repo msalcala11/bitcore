@@ -1,13 +1,37 @@
-import logger from '../../../../logger';
 import { MongoBound } from '../../../../models/base';
 import { Config } from '../../../../services/config';
 import { IEVMNetworkConfig } from '../../../../types/Config';
 import { jsonStringify } from '../../../../utils';
 import { TransformWithEventPipe } from '../../../../utils/streamWithEventPipe';
 import { EVMTransactionStorage } from '../models/transaction';
-import { IEVMTransactionTransformed } from '../types';
+import { Effect, IEVMTransactionTransformed } from '../types';
+import { splitTxByTokenEffects } from './erc20Transform';
 
-const MAX_DEDUPE_KEYS = 250_000;
+// Per-request serve mode stamped on token-history rows by PopulateReceiptTransform:
+// 'expand' = this row carries the authoritative receipt-derived effect set and expands
+// into one row per effect; 'drop' = a duplicate of an expanded txid, already covered by
+// the primary row's expansion; 'raw' = serve the provider row as-is (its value/endpoints).
+export type TokenHistoryMode = 'expand' | 'raw' | 'drop';
+
+/**
+ * The single gate for token expansion: the wallet-relevant effects of the stream's
+ * token. Used both to decide a txid's serve mode (PopulateReceiptTransform) and to
+ * produce the expanded rows (TokenHistoryExpansionTransform) — the two must never
+ * disagree, so they share this helper.
+ */
+export function getWalletRelevantTokenEffects(
+  effects: Effect[] | undefined,
+  walletAddressSet: Set<string>,
+  tokenAddressLower: string
+): Effect[] {
+  return (effects || []).filter(effect =>
+    effect.contractAddress?.toLowerCase() === tokenAddressLower &&
+    (
+      (!!effect.to && walletAddressSet.has(effect.to.toLowerCase())) ||
+      (!!effect.from && walletAddressSet.has(effect.from.toLowerCase()))
+    )
+  );
+}
 
 export class EVMListTransactionsStream extends TransformWithEventPipe {
   private walletAddressSet: Set<string>;
@@ -165,67 +189,39 @@ export class EVMListTransactionsStream extends TransformWithEventPipe {
   }
 }
 
-export class TxidDedupeTransform extends TransformWithEventPipe {
-  // Exact per-request dedupe for any realistic wallet, capped so a pathological
-  // limit-less stream can't exhaust the API worker. Past the cap the oldest keys are
-  // evicted (and a warning logged), so duplicates become possible only for requests
-  // streaming more rows than the cap.
-  private seenKeys = new Set<string>();
+/**
+ * External-path counterpart of Erc20RelatedFilterTransform (the local-DB splitter):
+ * expands 'expand'-marked rows into one row per wallet-relevant token effect, drops
+ * 'drop'-marked duplicates, and passes 'raw'/unmarked rows through so they serve
+ * their provider-supplied amounts.
+ */
+export class TokenHistoryExpansionTransform extends TransformWithEventPipe {
   private walletAddressSet: Set<string>;
-  private warnedAboutEviction = false;
+  private tokenAddressLower: string;
 
-  constructor(walletAddresses: Array<string> = [], private maxSeenKeys = MAX_DEDUPE_KEYS) {
+  constructor(walletAddresses: Array<string>, tokenAddress: string) {
     super({ objectMode: true });
     this.walletAddressSet = new Set(walletAddresses.map(address => address.toLowerCase()));
+    this.tokenAddressLower = tokenAddress.toLowerCase();
   }
 
   _transform(transaction: MongoBound<IEVMTransactionTransformed>, _, done) {
-    if (!transaction.receiptLogEffectsProcessed || !transaction.effects?.length) {
-      this.push(transaction);
-    } else if (transaction.txid) {
-      const key = `${transaction.txid}:${this.getDirection(transaction)}`;
-      if (this.seenKeys.has(key)) {
+    const mode: TokenHistoryMode | undefined = (transaction as any).tokenHistoryMode;
+    if (mode === 'drop') {
+      return done();
+    }
+    if (mode === 'expand') {
+      const tokenEffects = getWalletRelevantTokenEffects(transaction.effects, this.walletAddressSet, this.tokenAddressLower);
+      if (tokenEffects.length) {
+        for (const row of splitTxByTokenEffects(transaction, tokenEffects)) {
+          this.push(row);
+        }
         return done();
       }
-      this.rememberKey(key);
-      this.push(transaction);
-    } else {
-      this.push(transaction);
+      // Defensive only — the shared gate guarantees expand-marked rows have effects.
+      // Serving the provider row beats silently emitting nothing.
     }
+    this.push(transaction);
     return done();
-  }
-
-  private rememberKey(key: string) {
-    if (this.seenKeys.size >= this.maxSeenKeys) {
-      if (!this.warnedAboutEviction) {
-        this.warnedAboutEviction = true;
-        logger.warn('TxidDedupeTransform exceeded %o keys; evicting oldest — duplicate token history rows are possible for this request', this.maxSeenKeys);
-      }
-      // Sets iterate in insertion order, so the first key is the oldest.
-      const oldestKey = this.seenKeys.keys().next().value;
-      if (oldestKey !== undefined) {
-        this.seenKeys.delete(oldestKey);
-      }
-    }
-    this.seenKeys.add(key);
-  }
-
-  private getDirection(transaction: MongoBound<IEVMTransactionTransformed>) {
-    const fromWallet = this.isWalletAddress(transaction.from);
-    const toWallet = this.isWalletAddress(transaction.to);
-    if (fromWallet && toWallet) {
-      return 'move';
-    }
-    if (fromWallet) {
-      return 'send';
-    }
-    if (toWallet) {
-      return 'receive';
-    }
-    return 'other';
-  }
-
-  private isWalletAddress(address?: string) {
-    return !!address && this.walletAddressSet.has(address.toLowerCase());
   }
 }

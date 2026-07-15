@@ -171,7 +171,7 @@ function isUnsupportedBlockReceiptsError(err: any) {
     ));
 }
 
-async function getReceiptWithRetry(
+export async function getReceiptWithRetry(
   web3: Web3,
   txid: string,
   opts: { retries: number; retryDelayMs: number }

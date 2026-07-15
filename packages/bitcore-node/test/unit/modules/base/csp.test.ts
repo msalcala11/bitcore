@@ -8,7 +8,7 @@ import { MoralisStateProvider } from '../../../../src/modules/moralis/api/csp';
 import { CacheStorage } from '../../../../src/models/cache';
 import { BaseEVMStateProvider } from '../../../../src/providers/chain-state/evm/api/csp';
 import { PopulateReceiptTransform } from '../../../../src/providers/chain-state/evm/api/populateReceiptTransform';
-import { TxidDedupeTransform } from '../../../../src/providers/chain-state/evm/api/transform';
+import { TokenHistoryExpansionTransform } from '../../../../src/providers/chain-state/evm/api/transform';
 import { EVMBlockStorage } from '../../../../src/providers/chain-state/evm/models/block';
 import { EVMTransactionStorage } from '../../../../src/providers/chain-state/evm/models/transaction';
 import { WalletAddressStorage } from '../../../../src/models/walletAddress';
@@ -542,11 +542,15 @@ describe('MultiProviderEVMStateProvider: _buildWalletTransactionsStream tokenAdd
     expect(adapter.streamAddressTransactions.callCount).to.equal(0);
     expect(adapter.streamERC20Transfers.firstCall.args[0].tokenAddress).to.equal('0xtoken');
     expect(fakeStream.eventPipe.alwaysCalledWith(streamParams.transactionStream)).to.equal(true);
-    expect((streamParams.transactionStream.eventPipe as sinon.SinonSpy).calledOnceWith(streamParams.populateReceipt)).to.equal(true);
-    expect((streamParams.populateReceipt.eventPipe as sinon.SinonSpy).calledOnceWith(streamParams.populateEffects)).to.equal(true);
+    // Token streams get their own token-mode PopulateReceiptTransform; the native one
+    // from streamParams is left unused.
+    const tokenPopulateReceipt = (streamParams.transactionStream.eventPipe as sinon.SinonSpy).firstCall.args[0];
+    expect((streamParams.transactionStream.eventPipe as sinon.SinonSpy).calledOnce).to.equal(true);
+    expect(tokenPopulateReceipt).to.be.instanceOf(PopulateReceiptTransform);
+    expect((streamParams.populateReceipt.eventPipe as sinon.SinonSpy).notCalled).to.equal(true);
     expect((streamParams.populateEffects.eventPipe as sinon.SinonSpy).calledOnce).to.equal(true);
-    expect((streamParams.populateEffects.eventPipe as sinon.SinonSpy).firstCall.args[0]).to.be.instanceOf(TxidDedupeTransform);
-    expect(result).to.be.instanceOf(TxidDedupeTransform);
+    expect((streamParams.populateEffects.eventPipe as sinon.SinonSpy).firstCall.args[0]).to.be.instanceOf(TokenHistoryExpansionTransform);
+    expect(result).to.be.instanceOf(TokenHistoryExpansionTransform);
   });
 
   it('routes to streamAddressTransactions when no tokenAddress is set', async function() {
@@ -642,6 +646,42 @@ describe('BaseEVMStateProvider: populateReceipt', function() {
     expect((receipt as any).contractAddress).to.equal(undefined);
     expect((receipt as any).logsBloom).to.equal(undefined);
     expect((receipt as any).type).to.equal(undefined);
+  });
+
+  it('retries receipt lookups when retry opts are passed', async function() {
+    const provider = new BaseEVMStateProvider('ETH');
+    const getTransactionReceipt = sandbox.stub();
+    getTransactionReceipt.onFirstCall().resolves(null);
+    getTransactionReceipt.onSecondCall().rejects(new Error('rate limited'));
+    getTransactionReceipt.onThirdCall().resolves({ status: '0x1', transactionHash: txid, gasUsed: '0x64', logs: [] });
+    sandbox.stub(provider, 'getWeb3').resolves({ web3: { eth: { getTransactionReceipt } } } as any);
+
+    const receipt = await provider.getReceipt('mainnet', txid, { retries: 2, retryDelayMs: 1 });
+
+    expect(getTransactionReceipt.callCount).to.equal(3);
+    expect(receipt.status).to.equal(true);
+  });
+
+  it('returns null when receipt retries are exhausted', async function() {
+    const provider = new BaseEVMStateProvider('ETH');
+    const getTransactionReceipt = sandbox.stub().resolves(null);
+    sandbox.stub(provider, 'getWeb3').resolves({ web3: { eth: { getTransactionReceipt } } } as any);
+
+    const receipt = await provider.getReceipt('mainnet', txid, { retries: 2, retryDelayMs: 1 });
+
+    expect(getTransactionReceipt.callCount).to.equal(3);
+    expect(receipt).to.equal(null);
+  });
+
+  it('does not retry receipt lookups without retry opts', async function() {
+    const provider = new BaseEVMStateProvider('ETH');
+    const getTransactionReceipt = sandbox.stub().resolves(null);
+    sandbox.stub(provider, 'getWeb3').resolves({ web3: { eth: { getTransactionReceipt } } } as any);
+
+    const receipt = await provider.getReceipt('mainnet', txid);
+
+    expect(getTransactionReceipt.callCount).to.equal(1);
+    expect(receipt).to.equal(null);
   });
 
   it('derives ERC20 effects from fetched receipt logs before stripping the logs', async function() {
@@ -1082,7 +1122,10 @@ describe('BaseEVMStateProvider: populateReceipt', function() {
   });
 });
 
-describe('PopulateReceiptTransform', function() {
+// Native-mode behavior only — failures retry per row and successes clone onto
+// duplicates. Token-mode (per-txid pinned serve modes) is covered in
+// test/unit/models/transaction.test.ts, which can run without the RPC module chain.
+describe('PopulateReceiptTransform (native mode)', function() {
   let sandbox: sinon.SinonSandbox;
   const duplicateTxid = '0xbaf62c1c4de9761a421608634a4ad0f7dfbfa3546227c0f4044322bdda095f43';
   const transferEffect = {

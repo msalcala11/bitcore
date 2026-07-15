@@ -4,7 +4,8 @@ import logger from '../../../logger';
 import { CacheStorage } from '../../../models/cache';
 import { WalletAddressStorage } from '../../../models/walletAddress';
 import { BaseEVMStateProvider } from '../../../providers/chain-state/evm/api/csp';
-import { TxidDedupeTransform } from '../../../providers/chain-state/evm/api/transform';
+import { PopulateReceiptTransform } from '../../../providers/chain-state/evm/api/populateReceiptTransform';
+import { TokenHistoryExpansionTransform } from '../../../providers/chain-state/evm/api/transform';
 import { EVMBlockStorage } from '../../../providers/chain-state/evm/models/block';
 import { EVMTransactionStorage } from '../../../providers/chain-state/evm/models/transaction';
 import { AdapterError, AdapterErrorCode, AllProvidersUnavailableError } from '../../../providers/chain-state/external/adapters/errors';
@@ -392,12 +393,18 @@ export class MultiProviderEVMStateProvider extends BaseEVMStateProvider {
       }
     }
 
-    transactionStream = transactionStream
-      .eventPipe(populateReceipt)
-      .eventPipe(populateEffects);
-
     if (tokenAddress) {
-      transactionStream = transactionStream.eventPipe(new TxidDedupeTransform(walletAddresses));
+      // Token history: pin one enrichment mode per txid, then expand enriched rows one
+      // row per effect (mirroring the local-DB Erc20RelatedFilterTransform splitter).
+      // Raw-pinned rows serve their provider-supplied amounts instead.
+      transactionStream = transactionStream
+        .eventPipe(new PopulateReceiptTransform(this, { walletAddresses, tokenAddress }))
+        .eventPipe(populateEffects)
+        .eventPipe(new TokenHistoryExpansionTransform(walletAddresses, tokenAddress));
+    } else {
+      transactionStream = transactionStream
+        .eventPipe(populateReceipt)
+        .eventPipe(populateEffects);
     }
 
     return transactionStream;
