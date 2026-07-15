@@ -293,6 +293,8 @@ export class AlchemyAdapter implements IIndexedAPIAdapter {
 export class AlchemyAssetTransferStream extends ExternalApiStream {
   private sendsPageKey: string | null = null;
   private receivesPageKey: string | null = null;
+  private sendsDone = false;
+  private receivesDone = false;
   private seenKeys: Set<string> = new Set();
   private static readonly MAX_DEDUP_ENTRIES = 10000;
   private requestTimeout: number;
@@ -356,20 +358,20 @@ export class AlchemyAssetTransferStream extends ExternalApiStream {
 
       const requestStamp = `${process.pid}${Date.now()}`;
       const [sendsResponse, receivesResponse] = await Promise.all([
-        axios.post(this.url, {
+        this.sendsDone ? Promise.resolve(undefined) : axios.post(this.url, {
           jsonrpc: '2.0', id: `${requestStamp}0`,
           method: 'alchemy_getAssetTransfers',
           params: [sendsRequest]
         }, { timeout: this.requestTimeout }),
-        axios.post(this.url, {
+        this.receivesDone ? Promise.resolve(undefined) : axios.post(this.url, {
           jsonrpc: '2.0', id: `${requestStamp}1`,
           method: 'alchemy_getAssetTransfers',
           params: [receivesRequest]
         }, { timeout: this.requestTimeout })
       ]);
 
-      const sendsData = sendsResponse.data.result;
-      const receivesData = receivesResponse.data.result;
+      const sendsData = sendsResponse?.data.result;
+      const receivesData = receivesResponse?.data.result;
 
       // Prefer external > internal > erc20 when a single tx hash appears in multiple
       // categories (e.g. a defi tx with an ETH value and a token transfer log).
@@ -401,10 +403,16 @@ export class AlchemyAssetTransferStream extends ExternalApiStream {
         this.results++;
       }
 
-      this.sendsPageKey = sendsData?.pageKey || null;
-      this.receivesPageKey = receivesData?.pageKey || null;
+      if (!this.sendsDone) {
+        this.sendsPageKey = sendsData?.pageKey || null;
+        this.sendsDone = !this.sendsPageKey;
+      }
+      if (!this.receivesDone) {
+        this.receivesPageKey = receivesData?.pageKey || null;
+        this.receivesDone = !this.receivesPageKey;
+      }
 
-      if (!this.sendsPageKey && !this.receivesPageKey) {
+      if (this.sendsDone && this.receivesDone) {
         this.push(null);
       }
       this.page++;

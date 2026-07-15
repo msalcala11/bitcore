@@ -195,6 +195,29 @@ describe('AlchemyAdapter', function() {
 
   // --- Asset transfer stream ---
   describe('AlchemyAssetTransferStream', function() {
+    function transfer(id: string) {
+      return {
+        hash: `0x${id}`.padEnd(66, '0'), blockNum: '0x1', from: VALID_FROM, to: VALID_ADDRESS,
+        value: 1, rawContract: { value: '0x1' }, category: 'external', uniqueId: id,
+        metadata: { blockTimestamp: '2023-01-01T00:00:00Z' }
+      };
+    }
+
+    async function collectPagedStream() {
+      const stream = new AlchemyAssetTransferStream(
+        'https://example.com',
+        { chain: 'ETH', network: 'mainnet', address: VALID_ADDRESS, args: {} },
+        (item: any) => item
+      );
+      const items: any[] = [];
+      await new Promise<void>((resolve, reject) => {
+        stream.on('data', item => items.push(item));
+        stream.on('end', resolve);
+        stream.on('error', reject);
+      });
+      return items;
+    }
+
     it('should query both fromAddress and toAddress and deduplicate', async function() {
       const transfer1 = {
         hash: '0x1'.padEnd(66, '0'), blockNum: '0x1', from: VALID_FROM, to: VALID_ADDRESS,
@@ -220,6 +243,46 @@ describe('AlchemyAdapter', function() {
       expect(items).to.have.length(2);
       // value comes from rawContract.value (wei), not the decimal display field
       expect(items[0].value).to.equal('1000000000000000000');
+    });
+
+    it('should not restart sends after sends finish before receives', async function() {
+      const send = transfer('1');
+      const receive1 = transfer('2');
+      const receive2 = transfer('3');
+      axiosPostStub.onCall(0).resolves({ status: 200, data: { result: { transfers: [send] } } });
+      axiosPostStub.onCall(1).resolves({ status: 200, data: { result: { transfers: [receive1], pageKey: 'receives-2' } } });
+      axiosPostStub.onCall(2).resolves({ status: 200, data: { result: { transfers: [receive2] } } });
+
+      const items = await collectPagedStream();
+      const calls = axiosPostStub.getCalls();
+      const sendCalls = calls.filter(call => call.args[1].params[0].fromAddress);
+      const receiveCalls = calls.filter(call => call.args[1].params[0].toAddress);
+
+      expect(sendCalls).to.have.length(1);
+      expect(receiveCalls).to.have.length(2);
+      expect(receiveCalls[1].args[1].params[0].pageKey).to.equal('receives-2');
+      expect(items.map(item => item.uniqueId)).to.deep.equal(['1', '2', '3']);
+      expect(new Set(items.map(item => item.uniqueId)).size).to.equal(items.length);
+    });
+
+    it('should not restart receives after receives finish before sends', async function() {
+      const send1 = transfer('4');
+      const receive = transfer('5');
+      const send2 = transfer('6');
+      axiosPostStub.onCall(0).resolves({ status: 200, data: { result: { transfers: [send1], pageKey: 'sends-2' } } });
+      axiosPostStub.onCall(1).resolves({ status: 200, data: { result: { transfers: [receive] } } });
+      axiosPostStub.onCall(2).resolves({ status: 200, data: { result: { transfers: [send2] } } });
+
+      const items = await collectPagedStream();
+      const calls = axiosPostStub.getCalls();
+      const sendCalls = calls.filter(call => call.args[1].params[0].fromAddress);
+      const receiveCalls = calls.filter(call => call.args[1].params[0].toAddress);
+
+      expect(sendCalls).to.have.length(2);
+      expect(receiveCalls).to.have.length(1);
+      expect(sendCalls[1].args[1].params[0].pageKey).to.equal('sends-2');
+      expect(items.map(item => item.uniqueId)).to.deep.equal(['4', '5', '6']);
+      expect(new Set(items.map(item => item.uniqueId)).size).to.equal(items.length);
     });
 
     it('should fall back to 0 when rawContract.value is missing', async function() {
