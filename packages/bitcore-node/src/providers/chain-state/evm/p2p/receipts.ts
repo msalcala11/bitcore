@@ -214,22 +214,31 @@ export function computeReceiptFee(receipt: any, fallbackGasPrice?: number | stri
   return Number(gasUsed * gasPrice);
 }
 
+// Dropped from stored receipts: logsBloom is 256 bytes of filter data nothing reads;
+// from/to/type duplicate the parent tx document; root is the pre-Byzantium state root.
+// Every OTHER field is retained — chains bolt fee extensions onto receipts (OP Stack
+// l1Fee/l1GasUsed/l1GasPrice/l1FeeScalar and Ecotone successors, Arbitrum gasUsedForL1)
+// and an allowlist would silently destroy them. logs are compacted separately below and
+// survive normalization: effects are derived from them, and only stripReceiptLogs at
+// the persistence/API boundary removes them.
+const RECEIPT_FIELD_BLOCKLIST = new Set(['logs', 'logsBloom', 'from', 'to', 'type', 'root']);
+
 export function normalizeReceipt(receipt: any) {
   if (!receipt) {
     return receipt;
   }
-  const normalized = Utils.BI.scrubBigIntsInObject(receipt);
-  const compactReceipt = copyDefinedFields(normalized, [
-    'status',
-    'transactionHash',
-    'transactionIndex',
-    'blockHash',
-    'blockNumber',
-    'contractAddress',
-    'cumulativeGasUsed',
-    'gasUsed',
-    'effectiveGasPrice'
-  ]);
+  // BigInts scrub to decimal strings, not numbers: the known numeric fields are
+  // re-normalized below, and unknown extension fields must not lose precision.
+  const normalized = Utils.BI.scrubBigIntsInObject(receipt, 'string');
+  const compactReceipt = {} as any;
+  for (const field of Object.keys(normalized)) {
+    if (RECEIPT_FIELD_BLOCKLIST.has(field)) {
+      continue;
+    }
+    if (normalized[field] !== undefined && normalized[field] !== null) {
+      compactReceipt[field] = normalized[field];
+    }
+  }
   if (compactReceipt.status !== undefined) {
     compactReceipt.status = normalizeReceiptStatus(compactReceipt.status);
   }
