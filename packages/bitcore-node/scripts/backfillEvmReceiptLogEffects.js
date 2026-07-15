@@ -2,10 +2,6 @@
 
 import readline from 'readline';
 import util from 'util';
-import { computeBackfillExitCode } from '../build/src/providers/chain-state/evm/backfillExitCode.js';
-import { EVMTransactionStorage } from '../build/src/providers/chain-state/evm/models/transaction.js';
-import { addReceiptsToTxs } from '../build/src/providers/chain-state/evm/p2p/receipts.js';
-import { Storage } from '../build/src/services/storage.js';
 
 let shutdown = false;
 const runtimeExitState = {
@@ -78,6 +74,27 @@ if (startHeight < 1 || endHeight < startHeight) {
   usage('Invalid height range.');
 }
 
+// Load build- and config-dependent modules only after usage validation. This keeps
+// --help and invalid-argument paths usable in a clean, unconfigured checkout.
+let computeBackfillExitCode;
+let EVMTransactionStorage;
+let addReceiptsToTxs;
+let Storage;
+let BaseEVMStateProvider;
+
+async function loadRuntimeDependencies() {
+  const [exitCodeModule, transactionModule, receiptsModule, storageModule] = await Promise.all([
+    import('../build/src/providers/chain-state/evm/backfillExitCode.js'),
+    import('../build/src/providers/chain-state/evm/models/transaction.js'),
+    import('../build/src/providers/chain-state/evm/p2p/receipts.js'),
+    import('../build/src/services/storage.js')
+  ]);
+  ({ computeBackfillExitCode } = exitCodeModule);
+  ({ EVMTransactionStorage } = transactionModule);
+  ({ addReceiptsToTxs } = receiptsModule);
+  ({ Storage } = storageModule);
+}
+
 async function processBlockTxs(getWeb3, blockTxs) {
   // Legacy rows that still have their receipt logs stored don't need an RPC round trip.
   const txsNeedingReceipts = blockTxs.filter(tx => !Array.isArray(tx.receipt?.logs));
@@ -131,12 +148,11 @@ async function processBlockTxs(getWeb3, blockTxs) {
 }
 
 const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-// Imported lazily so --help and arg validation work without RPC provider deps loaded.
-let BaseEVMStateProvider;
 
 console.log('Connecting to database...');
 
-Storage.start()
+loadRuntimeDependencies()
+  .then(() => Storage.start())
   .then(async () => {
     const query = {
       chain,
@@ -231,10 +247,12 @@ Storage.start()
   })
   .catch(err => {
     console.error(err);
-    process.exitCode = computeBackfillExitCode({ ...runtimeExitState, fatal: true });
+    process.exitCode = computeBackfillExitCode
+      ? computeBackfillExitCode({ ...runtimeExitState, fatal: true })
+      : 1;
   })
   .finally(() => {
     rl.close();
     BaseEVMStateProvider?.teardownRpcs();
-    Storage.stop();
+    Storage?.stop();
   });

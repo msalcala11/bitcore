@@ -6,9 +6,13 @@ import { computeBackfillExitCode } from '../../src/providers/chain-state/evm/bac
 describe('backfillEvmReceiptLogEffects exit codes', function() {
   this.timeout(30000);
   const script = path.resolve(__dirname, '../../../scripts/backfillEvmReceiptLogEffects.js');
+  const missingConfig = path.resolve(__dirname, 'missing-bitcore.config.json');
 
   function runScript(args: string[]) {
-    return spawnSync('node', [script, ...args], { env: process.env, encoding: 'utf8' });
+    return spawnSync('node', [script, ...args], {
+      env: { ...process.env, BITCORE_CONFIG_PATH: missingConfig },
+      encoding: 'utf8'
+    });
   }
 
   it('maps clean completion to 0', function() {
@@ -37,12 +41,13 @@ describe('backfillEvmReceiptLogEffects exit codes', function() {
     })).to.equal(1);
   });
 
-  // Keep the real process boundary covered for usage validation. These paths run
-  // before Storage.start, so they do not require MongoDB or an RPC provider.
+  // Keep the real process boundary covered for usage validation. The deliberately
+  // missing config proves these paths do not load configured runtime dependencies.
   it('exits 0 for --help', function() {
     const result = runScript(['--help']);
     expect(result.status).to.equal(0);
     expect(result.stdout).to.contain('EXIT CODES');
+    expect(result.stderr).not.to.contain('No bitcore config');
   });
 
   it('exits 1 when required options are missing', function() {
