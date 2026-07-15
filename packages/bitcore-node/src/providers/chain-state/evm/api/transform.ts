@@ -1,3 +1,4 @@
+import logger from '../../../../logger';
 import { MongoBound } from '../../../../models/base';
 import { Config } from '../../../../services/config';
 import { IEVMNetworkConfig } from '../../../../types/Config';
@@ -5,6 +6,8 @@ import { jsonStringify } from '../../../../utils';
 import { TransformWithEventPipe } from '../../../../utils/streamWithEventPipe';
 import { EVMTransactionStorage } from '../models/transaction';
 import { IEVMTransactionTransformed } from '../types';
+
+const MAX_DEDUPE_KEYS = 250_000;
 
 export class EVMListTransactionsStream extends TransformWithEventPipe {
   private walletAddressSet: Set<string>;
@@ -163,12 +166,15 @@ export class EVMListTransactionsStream extends TransformWithEventPipe {
 }
 
 export class TxidDedupeTransform extends TransformWithEventPipe {
-  // Exact per-request dedupe: bounded by the rows one request streams. A capped window
-  // here would let duplicates through for wallets with more rows than the cap.
+  // Exact per-request dedupe for any realistic wallet, capped so a pathological
+  // limit-less stream can't exhaust the API worker. Past the cap the oldest keys are
+  // evicted (and a warning logged), so duplicates become possible only for requests
+  // streaming more rows than the cap.
   private seenKeys = new Set<string>();
   private walletAddressSet: Set<string>;
+  private warnedAboutEviction = false;
 
-  constructor(walletAddresses: Array<string> = []) {
+  constructor(walletAddresses: Array<string> = [], private maxSeenKeys = MAX_DEDUPE_KEYS) {
     super({ objectMode: true });
     this.walletAddressSet = new Set(walletAddresses.map(address => address.toLowerCase()));
   }
@@ -181,12 +187,27 @@ export class TxidDedupeTransform extends TransformWithEventPipe {
       if (this.seenKeys.has(key)) {
         return done();
       }
-      this.seenKeys.add(key);
+      this.rememberKey(key);
       this.push(transaction);
     } else {
       this.push(transaction);
     }
     return done();
+  }
+
+  private rememberKey(key: string) {
+    if (this.seenKeys.size >= this.maxSeenKeys) {
+      if (!this.warnedAboutEviction) {
+        this.warnedAboutEviction = true;
+        logger.warn('TxidDedupeTransform exceeded %o keys; evicting oldest — duplicate token history rows are possible for this request', this.maxSeenKeys);
+      }
+      // Sets iterate in insertion order, so the first key is the oldest.
+      const oldestKey = this.seenKeys.keys().next().value;
+      if (oldestKey !== undefined) {
+        this.seenKeys.delete(oldestKey);
+      }
+    }
+    this.seenKeys.add(key);
   }
 
   private getDirection(transaction: MongoBound<IEVMTransactionTransformed>) {

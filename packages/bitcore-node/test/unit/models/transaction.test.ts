@@ -889,6 +889,36 @@ describe('Transaction Model', function() {
         expect(rows.map(row => row.value)).to.deep.equal(['100', '5']);
       });
 
+      it('should evict the oldest dedupe keys past the cap', async () => {
+        const walletAddress = Web3.utils.toChecksumAddress('0xa91cfe0dcad33f36f3c9428d48eccbd8a71951b4');
+        const counterpartyAddress = Web3.utils.toChecksumAddress('0x8489935991b0eac9ce9e9330d35b9734ecdf2cad');
+        const effect = {
+          type: 'ERC20:transfer',
+          to: counterpartyAddress,
+          from: walletAddress,
+          amount: '100',
+          contractAddress: Web3.utils.toChecksumAddress('0x4fabb145d64652a948d72533023f6e7a623c7c53'),
+          callStack: 'log:7'
+        };
+        const rows = new Array<any>();
+        const stream = new TxidDedupeTransform([walletAddress], 1);
+        const done = new Promise<void>((resolve, reject) => {
+          stream
+            .on('data', tx => rows.push(tx))
+            .on('error', reject)
+            .on('end', resolve);
+        });
+        const row = (txid: string, value: string) =>
+          ({ txid, from: walletAddress, to: counterpartyAddress, value, effects: [effect], receiptLogEffectsProcessed: true });
+        stream.write(row('0xaaa', '100'));
+        stream.write(row('0xbbb', '200')); // evicts 0xaaa's key (cap of 1)
+        stream.write(row('0xaaa', '300')); // duplicate passes: the bounded-memory trade-off
+        stream.end();
+        await done;
+
+        expect(rows.map(r => r.value)).to.deep.equal(['100', '200', '300']);
+      });
+
       it('should not dedupe external token rows when receipt enrichment failed', async () => {
         const walletAddress = Web3.utils.toChecksumAddress('0xa91cfe0dcad33f36f3c9428d48eccbd8a71951b4');
         const counterpartyAddress = Web3.utils.toChecksumAddress('0x8489935991b0eac9ce9e9330d35b9734ecdf2cad');
