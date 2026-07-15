@@ -7,8 +7,9 @@ type ReceiptEnrichment = Pick<IEVMTransaction, 'effects' | 'fee' | 'receipt' | '
 
 export class PopulateReceiptTransform extends TransformWithEventPipe {
   // Success-only, per-request memo: external providers emit one row per wallet address, so
-  // the same txid can pass through more than once. Failures are not memoized, so a
-  // transient RPC error on one row does not poison its duplicates.
+  // the same txid can pass through more than once. Failures are not memoized — neither
+  // thrown errors nor null receipt lookups — so a transient RPC miss on one row does not
+  // poison its duplicates.
   private enrichedTxs = new Map<string, ReceiptEnrichment>();
 
   constructor(private evm: BaseEVMStateProvider, private maxCachedTxids = 10_000) {
@@ -24,7 +25,7 @@ export class PopulateReceiptTransform extends TransformWithEventPipe {
     }
     try {
       tx = await this.evm.populateReceipt(tx);
-      if (tx.txid) {
+      if (tx.txid && tx.receipt) {
         this.rememberEnrichment(tx.txid, this.snapshotEnrichment(tx));
       }
     } catch {/* ignore error; the row passes through unenriched and duplicates retry */}

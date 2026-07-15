@@ -1121,6 +1121,29 @@ describe('PopulateReceiptTransform', function() {
     expect(rows[1].effects).to.deep.equal([transferEffect]);
   });
 
+  it('retries duplicate rows when no receipt was found', async function() {
+    // populateReceipt resolving the tx unchanged models a null getTransactionReceipt:
+    // no throw, but no enrichment either — duplicates must retry, not reuse the miss.
+    const populateReceipt = sandbox.stub().callsFake(async tx => tx);
+    const stream = new PopulateReceiptTransform({ populateReceipt } as any);
+    const rows = new Array<any>();
+    const done = new Promise<void>((resolve, reject) => {
+      stream
+        .on('data', tx => rows.push(tx))
+        .on('error', reject)
+        .on('end', resolve);
+    });
+
+    stream.write({ txid: duplicateTxid, value: '100', effects: [] } as any);
+    stream.write({ txid: duplicateTxid, value: '200', effects: [] } as any);
+    stream.end();
+    await done;
+
+    expect(populateReceipt.callCount).to.equal(2);
+    expect(rows.map(row => row.value)).to.deep.equal(['100', '200']);
+    expect(rows.map(row => row.receipt)).to.deep.equal([undefined, undefined]);
+  });
+
   it('reuses successful receipt enrichment for duplicate txid rows', async function() {
     const populateReceipt = sandbox.stub().callsFake(async tx => ({
       ...tx,
