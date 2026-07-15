@@ -1593,6 +1593,50 @@ describe('Transaction Model', function() {
         expect(effects).to.deep.equal([expectedMissingReceiveEffect()]);
       });
 
+      it('should keep traced ERC20 effects for distinct unparseable transfers of a contract with parseable ones', async () => {
+        const otherRecipient = Web3.utils.toChecksumAddress('0x8489935991b0eac9ce9e9330d35b9734ecdf2cad');
+        const tx = missingReceiveTx({
+          calls: [{
+            from: missingReceiveTxFrom,
+            to: busdToken,
+            value: '0',
+            depth: '0',
+            type: 'CALL',
+            abiType: {
+              type: 'ERC20',
+              name: 'transfer',
+              params: [
+                { name: '_to', type: 'address', value: otherRecipient },
+                { name: '_value', type: 'uint256', value: '7' }
+              ]
+            }
+          }],
+          receipt: {
+            ...missingReceiveTx().receipt,
+            // Same contract: one canonical Transfer plus an unparseable one covering a
+            // DIFFERENT transfer (different endpoints) that only the trace saw.
+            logs: [
+              receiptTransferLog(),
+              receiptTransferLog({ topics: [transferEventTopic], logIndex: 1 })
+            ]
+          }
+        });
+
+        const effects = EVMTransactionStorage.getEffects(tx as any);
+
+        expect(effects).to.deep.equal([
+          {
+            type: 'ERC20:transfer',
+            to: otherRecipient,
+            from: missingReceiveTxFrom,
+            amount: '7',
+            contractAddress: busdToken,
+            callStack: '0'
+          },
+          expectedMissingReceiveEffect()
+        ]);
+      });
+
       it('should still remove traced ERC20 effects for ERC721-style Transfer logs', async () => {
         const tx = missingReceiveTx({
           calls: [{

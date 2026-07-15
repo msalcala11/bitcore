@@ -684,7 +684,7 @@ describe('BaseEVMStateProvider: populateReceipt', function() {
     const provider = new BaseEVMStateProvider('ETH');
     sandbox.stub(provider, 'getReceipt').resolves(receiptWithTransferLog() as any);
     const walletId = new ObjectId();
-    walletAddressFind.returns({ toArray: async () => [{ wallet: walletId }] });
+    walletAddressFind.returns({ toArray: async () => [{ address: walletAddress, wallet: walletId }] });
     const tx = {
       _id: new ObjectId(),
       txid,
@@ -716,7 +716,7 @@ describe('BaseEVMStateProvider: populateReceipt', function() {
     const provider = new BaseEVMStateProvider('ETH');
     sandbox.stub(provider, 'getReceipt').resolves(receiptWithTransferLog() as any);
     const walletId = new ObjectId();
-    walletAddressFind.returns({ toArray: async () => [{ wallet: walletId }] });
+    walletAddressFind.returns({ toArray: async () => [{ address: walletAddress, wallet: walletId }] });
     const tx = {
       _id: new ObjectId(),
       txid,

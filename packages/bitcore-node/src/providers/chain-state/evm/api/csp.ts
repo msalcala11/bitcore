@@ -465,15 +465,16 @@ export class BaseEVMStateProvider extends InternalStateProvider implements IChai
       return tx;
     }
     if (tx._id) {
-      const updateOp = { $set: update } as any;
       // Late-derived effects can add addresses the sync-time tagging never saw; without a
       // retag the wallets-filtered history query can never surface the repaired tx.
       const newWallets = await EVMTransactionStorage.getNewWalletsForTx(tx.chain, tx.network, tx);
       if (newWallets.length) {
-        updateOp.$addToSet = { wallets: { $each: newWallets } };
         tx.wallets = [...(tx.wallets || []), ...newWallets];
       }
-      await EVMTransactionStorage.collection.updateOne({ _id: tx._id }, updateOp);
+      await EVMTransactionStorage.collection.updateOne({ _id: tx._id }, {
+        $set: update,
+        ...(newWallets.length ? { $addToSet: { wallets: { $each: newWallets } } } : {})
+      });
     }
     return tx;
   }

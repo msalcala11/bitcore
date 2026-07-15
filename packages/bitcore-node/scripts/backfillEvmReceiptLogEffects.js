@@ -74,7 +74,7 @@ async function processBlockTxs(getWeb3, blockTxs) {
     await addReceiptsToTxs(await getWeb3(), txsNeedingReceipts);
   }
   const readyTxs = blockTxs.filter(tx => Array.isArray(tx.receipt?.logs));
-  const ops = [];
+  const updates = new Map();
   for (const tx of readyTxs) {
     // Only includes receiptLogEffectsProcessed when derivation completed, so partially
     // derived txs stay in this script's repair query for the next run.
@@ -82,28 +82,39 @@ async function processBlockTxs(getWeb3, blockTxs) {
     if (tx.fee !== undefined) {
       update.fee = tx.fee;
     }
-    const updateOp = { $set: update };
-    // Late-derived effects can add addresses the sync-time tagging never saw; without a
-    // retag the wallets-filtered history query can never surface the repaired tx.
-    const newWallets = await EVMTransactionStorage.getNewWalletsForTx(tx.chain, tx.network, tx);
+    updates.set(tx, update);
+  }
+  // Late-derived effects can add addresses the sync-time tagging never saw; without a
+  // retag the wallets-filtered history query can never surface the repaired tx. Batched:
+  // one address lookup per block. Must run after derivation so it sees the new effects.
+  const newWalletsByTx = readyTxs.length
+    ? await EVMTransactionStorage.getNewWalletsForTxs(chain, network, readyTxs)
+    : new Map();
+  const ops = readyTxs.map(tx => {
+    const updateOp = { $set: updates.get(tx) };
+    const newWallets = newWalletsByTx.get(tx) || [];
     if (newWallets.length) {
       updateOp.$addToSet = { wallets: { $each: newWallets } };
     }
-    ops.push({ updateOne: { filter: { _id: tx._id }, update: updateOp } });
-  }
-  let updated = ops.length;
+    return { updateOne: { filter: { _id: tx._id }, update: updateOp } };
+  });
+  let written = ops.length;
   if (!dryRun && ops.length) {
     try {
       const result = await EVMTransactionStorage.collection.bulkWrite(ops, { ordered: false });
-      updated = result.modifiedCount ?? ops.length;
+      written = result.modifiedCount;
     } catch (err) {
       // Partial failures persist what they can; unwritten rows stay unflagged and are
       // retried on the next run.
-      updated = err?.result?.modifiedCount ?? err?.result?.nModified ?? 0;
+      written = err?.result?.modifiedCount ?? err?.result?.nModified ?? 0;
       console.error(`\nPartial write failure for block ${blockTxs[0].blockHeight}: ${err.message || err}`);
     }
   }
-  return { updated, skipped: blockTxs.length - updated };
+  return {
+    written,
+    unfetchable: blockTxs.length - readyTxs.length,
+    notModified: ops.length - written
+  };
 }
 
 const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
@@ -164,11 +175,15 @@ Storage.start()
       }
       const blockHeight = blockTxs[0].blockHeight;
       try {
-        const { updated, skipped } = await processBlockTxs(getWeb3, blockTxs);
-        countUpdated += updated;
-        if (skipped) {
-          countSkippedTxs += skipped;
-          console.error(`\n${skipped} tx(s) in block ${blockHeight} have unfetchable receipts (will retry on next run)`);
+        const { written, unfetchable, notModified } = await processBlockTxs(getWeb3, blockTxs);
+        countUpdated += written;
+        if (unfetchable) {
+          countSkippedTxs += unfetchable;
+          console.error(`\n${unfetchable} tx(s) in block ${blockHeight} have unfetchable receipts (will retry on next run)`);
+        }
+        if (notModified) {
+          countSkippedTxs += notModified;
+          console.error(`\n${notModified} tx(s) in block ${blockHeight} were not updated (write failure, or already repaired concurrently); retried on the next run only if still unflagged`);
         }
       } catch (err) {
         countSkippedTxs += blockTxs.length;
