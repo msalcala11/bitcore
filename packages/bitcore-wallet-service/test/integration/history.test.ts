@@ -1266,7 +1266,8 @@ describe('History', function() {
         txs.length.should.equal(1);
         txs[0].action.should.equal('moved');
         txs[0].amount.should.equal(17);
-        txs[0].outputs.length.should.equal(4);
+        txs[0].outputs.length.should.equal(3);
+        txs[0].outputs.reduce((sum, output) => sum + output.amount, 0).should.equal(17);
         txs[0].effects.map(effect => effect.callStack).should.deep.equal(['log:7', 'log:8', 'log:9']);
         done();
       });

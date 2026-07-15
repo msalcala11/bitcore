@@ -3848,8 +3848,12 @@ export class WalletService implements IWalletService {
     const seenReceive = {};
 
     const moves: { [txid: string]: ITxProposal } = {};
-    const moveAmounts = new Map<string, number>();
-    const moveIdentityKeys = new Map<string, Set<string> | null>();
+    const moveAggregations = new Map<string, {
+      rawRowCount: number;
+      knownAmount: number;
+      knownIdentityKeys: Set<string>;
+      firstIdentitylessAmount?: number;
+    }>();
     const effectKey = effect => [
       effect.type,
       effect.callStack,
@@ -3871,24 +3875,34 @@ export class WalletService implements IWalletService {
       const effectKeys = (tx.effects || []).map(effectKey).sort();
       return effectKeys.length ? `effects:${JSON.stringify(effectKeys)}` : undefined;
     };
-    const addMoveAmount = tx => {
+    const aggregateMove = tx => {
       const amount = Math.abs(tx.satoshis);
       const identityKey = moveIdentityKey(tx);
-      if (!moveAmounts.has(tx.txid)) {
-        moveAmounts.set(tx.txid, amount);
-        moveIdentityKeys.set(tx.txid, identityKey ? new Set([identityKey]) : null);
-        return;
+      let aggregation = moveAggregations.get(tx.txid);
+      if (!aggregation) {
+        aggregation = {
+          rawRowCount: 0,
+          knownAmount: 0,
+          knownIdentityKeys: new Set()
+        };
+        moveAggregations.set(tx.txid, aggregation);
       }
+      aggregation.rawRowCount++;
 
-      // Rows without an effect/call-stack identity cannot be distinguished from the
-      // same transaction repeated by multiple address streams. Keep the first amount
-      // for that ambiguous shape rather than risk double counting it.
-      const seenKeys = moveIdentityKeys.get(tx.txid);
-      if (!identityKey || !seenKeys || seenKeys.has(identityKey)) {
-        return;
+      if (!identityKey) {
+        if (aggregation.firstIdentitylessAmount === undefined) {
+          aggregation.firstIdentitylessAmount = amount;
+        }
+        // Identity-less rows may be distinct provider events, so retain their outputs;
+        // their first amount is only a fallback when no known identity is available.
+        return true;
       }
-      seenKeys.add(identityKey);
-      moveAmounts.set(tx.txid, (moveAmounts.get(tx.txid) ?? 0) + amount);
+      if (aggregation.knownIdentityKeys.has(identityKey)) {
+        return false;
+      }
+      aggregation.knownIdentityKeys.add(identityKey);
+      aggregation.knownAmount += amount;
+      return true;
     };
     // remove 'fees' and 'moves' (probably change addresses)
     txs = txs.filter(tx => {
@@ -3932,15 +3946,17 @@ export class WalletService implements IWalletService {
 
       // move without send?
       if (tx.category == 'move' && !indexedSend[tx.txid]) {
-        addMoveAmount(tx);
+        const includeOutput = aggregateMove(tx);
         const output = {
           address: tx.address,
           amount: Math.abs(tx.satoshis)
         };
 
         if (moves[tx.txid]) {
-          moves[tx.txid].outputs.push(output);
-          mergeEffects(moves[tx.txid], tx);
+          if (includeOutput) {
+            moves[tx.txid].outputs.push(output);
+            mergeEffects(moves[tx.txid], tx);
+          }
           return false;
         } else {
           moves[tx.txid] = tx;
@@ -3950,11 +3966,10 @@ export class WalletService implements IWalletService {
       }
     });
 
-    // Filter out moves:
-    // This are moves from the wallet to itself. There are 2+ outputs. one if the change
-    // the other a main address for the wallet.
+    // Only multi-row moves need change-address filtering. Use the original row count,
+    // not the deduped output count, so suppressing a duplicate does not skip cleanup.
     for (const txid in moves) {
-      if (moves[txid].outputs.length <= 1) {
+      if ((moveAggregations.get(txid)?.rawRowCount ?? 0) <= 1) {
         delete moves[txid];
       }
     }
@@ -4040,7 +4055,12 @@ export class WalletService implements IWalletService {
             break;
           case 'move':
             ret.action = 'moved';
-            ret.amount = moveAmounts.get(tx.txid) ?? Math.abs(tx.satoshis);
+            const moveAggregation = moveAggregations.get(tx.txid);
+            // Known effects are authoritative when present. Mixed identity-less outputs
+            // remain visible, but cannot safely contribute an amount without an identity.
+            ret.amount = moveAggregation && moveAggregation.knownIdentityKeys.size > 0
+              ? moveAggregation.knownAmount
+              : moveAggregation?.firstIdentitylessAmount ?? Math.abs(tx.satoshis);
             ret.addressTo = tx.outputs && tx.outputs.length ? tx.outputs[0].address : null;
             ret.outputs = tx.outputs;
             break;
