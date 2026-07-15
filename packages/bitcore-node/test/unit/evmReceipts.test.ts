@@ -18,6 +18,7 @@ describe('normalizeReceipt', function() {
     effectiveGasPrice: '0x14',
     logsBloom: '0x'.padEnd(514, '0'),
     type: '0x2',
+    root: '0x4c6f7374207265636569707420726f6f74',
     logs: [{
       address: '0x4Fabb145d64652a948d72533023f6E7A623C7C53',
       topics: ['0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef'],
@@ -29,14 +30,17 @@ describe('normalizeReceipt', function() {
     }]
   });
 
-  it('drops bulk and tx-duplicated fields but keeps compact logs', function() {
+  it('drops only the bloom and original logs while retaining compact logs and receipt identity fields', function() {
     const receipt = normalizeReceipt(baseReceipt());
 
     expect(receipt.logsBloom).to.equal(undefined);
-    expect(receipt.from).to.equal(undefined);
-    expect(receipt.to).to.equal(undefined);
-    expect(receipt.type).to.equal(undefined);
-    expect(receipt.contractAddress).to.equal(undefined); // null is dropped
+    expect(receipt.from).to.equal('0xa81011Ae274eF6deBd3BDaB634102c7b6c2C452D');
+    expect(receipt.to).to.equal('0x4Fabb145d64652a948d72533023f6E7A623C7C53');
+    // IEVMTransaction has no other transaction-type carrier, so EIP-2718 type must
+    // remain on the normalized receipt.
+    expect(receipt.type).to.equal('0x2');
+    expect(receipt.root).to.equal('0x4c6f7374207265636569707420726f6f74');
+    expect(receipt.contractAddress).to.equal(null);
     expect(receipt.status).to.equal(true);
     expect(receipt.blockNumber).to.equal(15774356);
     expect(receipt.gasUsed).to.equal(100);
@@ -74,7 +78,7 @@ describe('normalizeReceipt', function() {
     expect(receipt.gasUsedForL1).to.equal('0x21e8');
   });
 
-  it('keeps extension fields through the persistence strip while logs are removed', function() {
+  it('keeps every other receipt field through the persistence strip while logs are removed', function() {
     const tx: any = {
       txid,
       chain: 'ETH',
@@ -86,6 +90,12 @@ describe('normalizeReceipt', function() {
     const update = EVMTransactionStorage.deriveReceiptLogEffects(tx);
 
     expect((update.receipt as any).logs).to.equal(undefined);
+    expect((update.receipt as any).logsBloom).to.equal(undefined);
+    expect((update.receipt as any).from).to.equal('0xa81011Ae274eF6deBd3BDaB634102c7b6c2C452D');
+    expect((update.receipt as any).to).to.equal('0x4Fabb145d64652a948d72533023f6E7A623C7C53');
+    expect((update.receipt as any).type).to.equal('0x2');
+    expect((update.receipt as any).root).to.equal('0x4c6f7374207265636569707420726f6f74');
+    expect((update.receipt as any).contractAddress).to.equal(null);
     expect((update.receipt as any).l1Fee).to.equal('0x2e94ae15c14e0');
     expect((update.receipt as any).gasUsed).to.equal(100);
   });

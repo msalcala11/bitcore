@@ -187,6 +187,10 @@ export interface TxReceipt {
   transactionIndex: number;
   blockHash: string;
   blockNumber: number;
+  from?: string;
+  to?: string;
+  type?: number | string;
+  root?: string;
   contractAddress?: string;
   cumulativeGasUsed: number;
   gasUsed: number;

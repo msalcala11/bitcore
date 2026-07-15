@@ -214,14 +214,14 @@ export function computeReceiptFee(receipt: any, fallbackGasPrice?: number | stri
   return Number(gasUsed * gasPrice);
 }
 
-// Dropped from stored receipts: logsBloom is 256 bytes of filter data nothing reads;
-// from/to/type duplicate the parent tx document; root is the pre-Byzantium state root.
+// Dropped from normalized receipts: logsBloom is 256 bytes of filter data nothing reads,
+// and the original logs are replaced with their compact representation below.
 // Every OTHER field is retained — chains bolt fee extensions onto receipts (OP Stack
 // l1Fee/l1GasUsed/l1GasPrice/l1FeeScalar and Ecotone successors, Arbitrum gasUsedForL1)
 // and an allowlist would silently destroy them. logs are compacted separately below and
 // survive normalization: effects are derived from them, and only stripReceiptLogs at
 // the persistence/API boundary removes them.
-const RECEIPT_FIELD_BLOCKLIST = new Set(['logs', 'logsBloom', 'from', 'to', 'type', 'root']);
+const RECEIPT_FIELD_BLOCKLIST = new Set(['logs', 'logsBloom']);
 
 export function normalizeReceipt(receipt: any) {
   if (!receipt) {
@@ -235,9 +235,7 @@ export function normalizeReceipt(receipt: any) {
     if (RECEIPT_FIELD_BLOCKLIST.has(field)) {
       continue;
     }
-    if (normalized[field] !== undefined && normalized[field] !== null) {
-      compactReceipt[field] = normalized[field];
-    }
+    compactReceipt[field] = normalized[field];
   }
   if (compactReceipt.status !== undefined) {
     compactReceipt.status = normalizeReceiptStatus(compactReceipt.status);
