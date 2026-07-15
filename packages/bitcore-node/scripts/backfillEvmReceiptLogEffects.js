@@ -30,10 +30,16 @@ function usage(errMsg) {
   console.log('  --endHeight <value>      Block height to stop at (default: local tip)');
   console.log('  --dryRun                 Report what would be updated without writing');
   console.log('  --yes                    Skip the confirmation prompt');
+  console.log('');
+  console.log('EXIT CODES:');
+  console.log('  0  completed with nothing left to repair');
+  console.log('  1  usage error or fatal error (nothing may have run)');
+  console.log('  2  incomplete - skipped/unwritten txs or interrupted; re-run to retry');
   if (errMsg) {
     console.log('\nERROR: ' + errMsg);
+    process.exit(1);
   }
-  process.exit();
+  process.exit(0);
 }
 
 const args = process.argv.slice(2);
@@ -214,8 +220,15 @@ Storage.start()
     if (countSkippedTxs) {
       console.log(`${countSkippedTxs} tx(s) were left unprocessed; re-run to retry them.`);
     }
+    // Scheduled runs key off the exit code: 2 = incomplete but retryable.
+    if (countSkippedTxs || shutdown) {
+      process.exitCode = 2;
+    }
   })
-  .catch(console.error)
+  .catch(err => {
+    console.error(err);
+    process.exitCode = 1;
+  })
   .finally(() => {
     rl.close();
     BaseEVMStateProvider?.teardownRpcs();
