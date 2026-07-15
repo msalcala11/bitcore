@@ -3910,6 +3910,7 @@ export class WalletService implements IWalletService {
 
         if (moves[tx.txid]) {
           moves[tx.txid].outputs.push(output);
+          mergeEffects(moves[tx.txid], tx);
           return false;
         } else {
           moves[tx.txid] = tx;
@@ -4009,6 +4010,10 @@ export class WalletService implements IWalletService {
             break;
           case 'move':
             ret.action = 'moved';
+            // First row's satoshis, not an output sum: duplicate move rows (one per
+            // address stream) repeat the same amount, so summing would double count.
+            // Distinct same-txid moves understating amount is a known boundary; all
+            // legs are still present in outputs/effects.
             ret.amount = Math.abs(tx.satoshis);
             ret.addressTo = tx.outputs && tx.outputs.length ? tx.outputs[0].address : null;
             ret.outputs = tx.outputs;
