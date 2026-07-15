@@ -1203,7 +1203,7 @@ describe('History', function() {
       });
     });
 
-    it('should merge effects when grouping duplicate move rows and keep the first amount', function(done) {
+    it('should sum distinct move rows while deduping repeated effect identities', function(done) {
       const walletAddress = '0xa91cFe0DcAd33F36f3c9428D48eCCBD8A71951b4';
       const moveEffect = (amount, callStack) => ({
         type: 'ERC20:transfer',
@@ -1219,22 +1219,44 @@ describe('History', function() {
         blockTime: '2022-10-18T21:28:59.000Z',
         category: 'move',
         height: BCHEIGHT,
-        satoshis: 1000,
+        satoshis: 5,
         address: walletAddress,
         chain: 'ETH',
         network: 'mainnet',
-        effects: [moveEffect('1000', 'log:7')]
+        effects: [moveEffect('5', 'log:7')]
+      }, {
+        id: 'token-move-1-duplicate',
+        txid: '0xbaf62c1c4de9761a421608634a4ad0f7dfbfa3546227c0f4044322bdda095f43',
+        blockTime: '2022-10-18T21:28:59.000Z',
+        category: 'move',
+        height: BCHEIGHT,
+        satoshis: 5,
+        address: walletAddress,
+        chain: 'ETH',
+        network: 'mainnet',
+        effects: [moveEffect('5', 'log:7')]
       }, {
         id: 'token-move-2',
         txid: '0xbaf62c1c4de9761a421608634a4ad0f7dfbfa3546227c0f4044322bdda095f43',
         blockTime: '2022-10-18T21:28:59.000Z',
         category: 'move',
         height: BCHEIGHT,
-        satoshis: 2000,
+        satoshis: 7,
         address: walletAddress,
         chain: 'ETH',
         network: 'mainnet',
-        effects: [moveEffect('2000', 'log:8')]
+        effects: [moveEffect('7', 'log:8')]
+      }, {
+        id: 'token-move-3',
+        txid: '0xbaf62c1c4de9761a421608634a4ad0f7dfbfa3546227c0f4044322bdda095f43',
+        blockTime: '2022-10-18T21:28:59.000Z',
+        category: 'move',
+        height: BCHEIGHT,
+        satoshis: 5,
+        address: walletAddress,
+        chain: 'ETH',
+        network: 'mainnet',
+        effects: [moveEffect('5', 'log:9')]
       }];
       helpers.stubHistory(null, null, txs);
 
@@ -1243,12 +1265,35 @@ describe('History', function() {
         should.exist(txs);
         txs.length.should.equal(1);
         txs[0].action.should.equal('moved');
-        // Documented boundary: the grouped amount stays at the first row's satoshis
-        // (summing would double count the common duplicate-row case); every leg is
-        // still present in outputs and effects.
-        txs[0].amount.should.equal(1000);
+        txs[0].amount.should.equal(17);
+        txs[0].outputs.length.should.equal(4);
+        txs[0].effects.map(effect => effect.callStack).should.deep.equal(['log:7', 'log:8', 'log:9']);
+        done();
+      });
+    });
+
+    it('should keep one amount for identity-less duplicate move rows', function(done) {
+      const walletAddress = '0xa91cFe0DcAd33F36f3c9428D48eCCBD8A71951b4';
+      const duplicateMove = id => ({
+        id,
+        txid: '0xbaf62c1c4de9761a421608634a4ad0f7dfbfa3546227c0f4044322bdda095f43',
+        blockTime: '2022-10-18T21:28:59.000Z',
+        category: 'move',
+        height: BCHEIGHT,
+        satoshis: 5,
+        address: walletAddress,
+        chain: 'ETH',
+        network: 'mainnet',
+        effects: []
+      });
+      helpers.stubHistory(null, null, [duplicateMove('raw-move-1'), duplicateMove('raw-move-2')]);
+
+      server.getTxHistory({}, function(err, txs) {
+        should.not.exist(err);
+        should.exist(txs);
+        txs.length.should.equal(1);
+        txs[0].amount.should.equal(5);
         txs[0].outputs.length.should.equal(2);
-        txs[0].effects.map(effect => effect.callStack).should.deep.equal(['log:7', 'log:8']);
         done();
       });
     });

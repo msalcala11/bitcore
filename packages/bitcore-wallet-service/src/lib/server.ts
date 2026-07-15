@@ -3848,6 +3848,8 @@ export class WalletService implements IWalletService {
     const seenReceive = {};
 
     const moves: { [txid: string]: ITxProposal } = {};
+    const moveAmounts = new Map<string, number>();
+    const moveIdentityKeys = new Map<string, Set<string> | null>();
     const effectKey = effect => [
       effect.type,
       effect.callStack,
@@ -3860,6 +3862,33 @@ export class WalletService implements IWalletService {
       if (source.effects?.length) {
         target.effects = _.uniqBy((target.effects || []).concat(source.effects), effectKey);
       }
+    };
+    const moveIdentityKey = tx => {
+      const hasCallStack = tx.callStack !== undefined && tx.callStack !== null && tx.callStack !== '';
+      if (hasCallStack) {
+        return `call:${tx.callStack}`;
+      }
+      const effectKeys = (tx.effects || []).map(effectKey).sort();
+      return effectKeys.length ? `effects:${JSON.stringify(effectKeys)}` : undefined;
+    };
+    const addMoveAmount = tx => {
+      const amount = Math.abs(tx.satoshis);
+      const identityKey = moveIdentityKey(tx);
+      if (!moveAmounts.has(tx.txid)) {
+        moveAmounts.set(tx.txid, amount);
+        moveIdentityKeys.set(tx.txid, identityKey ? new Set([identityKey]) : null);
+        return;
+      }
+
+      // Rows without an effect/call-stack identity cannot be distinguished from the
+      // same transaction repeated by multiple address streams. Keep the first amount
+      // for that ambiguous shape rather than risk double counting it.
+      const seenKeys = moveIdentityKeys.get(tx.txid);
+      if (!identityKey || !seenKeys || seenKeys.has(identityKey)) {
+        return;
+      }
+      seenKeys.add(identityKey);
+      moveAmounts.set(tx.txid, (moveAmounts.get(tx.txid) ?? 0) + amount);
     };
     // remove 'fees' and 'moves' (probably change addresses)
     txs = txs.filter(tx => {
@@ -3903,6 +3932,7 @@ export class WalletService implements IWalletService {
 
       // move without send?
       if (tx.category == 'move' && !indexedSend[tx.txid]) {
+        addMoveAmount(tx);
         const output = {
           address: tx.address,
           amount: Math.abs(tx.satoshis)
@@ -4010,11 +4040,7 @@ export class WalletService implements IWalletService {
             break;
           case 'move':
             ret.action = 'moved';
-            // First row's satoshis, not an output sum: duplicate move rows (one per
-            // address stream) repeat the same amount, so summing would double count.
-            // Distinct same-txid moves understating amount is a known boundary; all
-            // legs are still present in outputs/effects.
-            ret.amount = Math.abs(tx.satoshis);
+            ret.amount = moveAmounts.get(tx.txid) ?? Math.abs(tx.satoshis);
             ret.addressTo = tx.outputs && tx.outputs.length ? tx.outputs[0].address : null;
             ret.outputs = tx.outputs;
             break;
