@@ -208,10 +208,12 @@ function setReceiptAndFee(tx: IEVMTransactionInProcess, receipt: any) {
 export function computeReceiptFee(receipt: any, fallbackGasPrice?: number | string | bigint): number | undefined {
   const gasUsed = toBigInt(receipt?.gasUsed);
   const gasPrice = toBigInt(receipt?.effectiveGasPrice ?? fallbackGasPrice);
-  if (gasUsed === undefined || gasPrice === undefined || gasUsed < 0n || gasPrice < 0n) {
+  // OP Stack receipts report the L1 data charge separately from execution gas.
+  const l1Fee = toBigInt(receipt?.l1Fee) ?? 0n;
+  if (gasUsed === undefined || gasPrice === undefined || gasUsed < 0n || gasPrice < 0n || l1Fee < 0n) {
     return undefined;
   }
-  return Number(gasUsed * gasPrice);
+  return Number(gasUsed * gasPrice + l1Fee);
 }
 
 // Dropped from normalized receipts: logsBloom is 256 bytes of filter data nothing reads,

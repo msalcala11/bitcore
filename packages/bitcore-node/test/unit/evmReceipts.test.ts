@@ -1,5 +1,5 @@
 import { expect } from 'chai';
-import { normalizeReceipt } from '../../src/providers/chain-state/evm/p2p/receipts';
+import { computeReceiptFee, normalizeReceipt } from '../../src/providers/chain-state/evm/p2p/receipts';
 import { EVMTransactionStorage } from '../../src/providers/chain-state/evm/models/transaction';
 
 describe('normalizeReceipt', function() {
@@ -115,5 +115,21 @@ describe('normalizeReceipt', function() {
   it('returns falsy receipts unchanged', function() {
     expect(normalizeReceipt(null)).to.equal(null);
     expect(normalizeReceipt(undefined)).to.equal(undefined);
+  });
+});
+
+describe('computeReceiptFee', function() {
+  it('adds an OP Stack L1 data fee to the execution fee', function() {
+    expect(computeReceiptFee({ gasUsed: 10, effectiveGasPrice: 20, l1Fee: 50 })).to.equal(250);
+    expect(computeReceiptFee({ gasUsed: '10', effectiveGasPrice: '20', l1Fee: '50' })).to.equal(250);
+    expect(computeReceiptFee({ gasUsed: '0xa', effectiveGasPrice: '0x14', l1Fee: '0x32' })).to.equal(250);
+  });
+
+  it('treats a missing L1 data fee as zero', function() {
+    expect(computeReceiptFee({ gasUsed: 10, effectiveGasPrice: 20 })).to.equal(200);
+  });
+
+  it('rejects negative fee components', function() {
+    expect(computeReceiptFee({ gasUsed: 10, effectiveGasPrice: 20, l1Fee: -1 })).to.equal(undefined);
   });
 });

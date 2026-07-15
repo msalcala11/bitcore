@@ -643,9 +643,9 @@ describe('BaseEVMStateProvider: populateReceipt', function() {
     expect(receipt.blockNumber).to.equal(15774356);
     expect(receipt.gasUsed).to.equal(100);
     expect((receipt as any).effectiveGasPrice).to.equal(20);
-    expect((receipt as any).contractAddress).to.equal(undefined);
+    expect((receipt as any).contractAddress).to.equal(null);
     expect((receipt as any).logsBloom).to.equal(undefined);
-    expect((receipt as any).type).to.equal(undefined);
+    expect((receipt as any).type).to.equal('0x2');
   });
 
   it('retries receipt lookups when retry opts are passed', async function() {
@@ -688,7 +688,7 @@ describe('BaseEVMStateProvider: populateReceipt', function() {
     const updateOne = sandbox.stub().resolves();
     sandbox.stub(EVMTransactionStorage, 'collection').get(() => ({ updateOne }));
     const provider = new BaseEVMStateProvider('ETH');
-    sandbox.stub(provider, 'getReceipt').resolves(receiptWithTransferLog() as any);
+    sandbox.stub(provider, 'getReceipt').resolves({ ...receiptWithTransferLog(), l1Fee: '0x32' } as any);
     const tx = {
       _id: new ObjectId(),
       txid,
@@ -707,12 +707,12 @@ describe('BaseEVMStateProvider: populateReceipt', function() {
     await provider.populateReceipt(tx);
 
     const expectedEffect = expectedTransferEffect();
-    expect(tx.fee).to.equal(2000);
+    expect(tx.fee).to.equal(2050);
     expect(tx.effects).to.deep.equal([expectedEffect]);
     expect(tx.receipt.logs).to.equal(undefined);
     expect(updateOne.firstCall.args[1].$set).to.deep.equal({
       receipt: tx.receipt,
-      fee: 2000,
+      fee: 2050,
       effects: [expectedEffect],
       receiptLogEffectsProcessed: true
     });
