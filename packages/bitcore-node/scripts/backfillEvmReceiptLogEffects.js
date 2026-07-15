@@ -82,12 +82,28 @@ async function processBlockTxs(getWeb3, blockTxs) {
     if (tx.fee !== undefined) {
       update.fee = tx.fee;
     }
-    ops.push({ updateOne: { filter: { _id: tx._id }, update: { $set: update } } });
+    const updateOp = { $set: update };
+    // Late-derived effects can add addresses the sync-time tagging never saw; without a
+    // retag the wallets-filtered history query can never surface the repaired tx.
+    const newWallets = await EVMTransactionStorage.getNewWalletsForTx(tx.chain, tx.network, tx);
+    if (newWallets.length) {
+      updateOp.$addToSet = { wallets: { $each: newWallets } };
+    }
+    ops.push({ updateOne: { filter: { _id: tx._id }, update: updateOp } });
   }
+  let updated = ops.length;
   if (!dryRun && ops.length) {
-    await EVMTransactionStorage.collection.bulkWrite(ops, { ordered: false });
+    try {
+      const result = await EVMTransactionStorage.collection.bulkWrite(ops, { ordered: false });
+      updated = result.modifiedCount ?? ops.length;
+    } catch (err) {
+      // Partial failures persist what they can; unwritten rows stay unflagged and are
+      // retried on the next run.
+      updated = err?.result?.modifiedCount ?? err?.result?.nModified ?? 0;
+      console.error(`\nPartial write failure for block ${blockTxs[0].blockHeight}: ${err.message || err}`);
+    }
   }
-  return { updated: ops.length, skipped: blockTxs.length - readyTxs.length };
+  return { updated, skipped: blockTxs.length - updated };
 }
 
 const rl = readline.createInterface({ input: process.stdin, output: process.stdout });

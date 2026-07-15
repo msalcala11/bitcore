@@ -160,6 +160,34 @@ export class EVMTransactionModel extends BaseTransaction<IEVMTransaction> {
     }
   }
 
+  /**
+   * Finds the wallet ids registered for any address the tx touches (to, from, and effect
+   * endpoints). Used at sync time to tag txs, and by the repair paths (read-time
+   * populateReceipt and the backfill script) to retag when late-derived effects add
+   * addresses — history queries filter on the wallets tag, so an untagged repair would
+   * be invisible to the wallet.
+   */
+  async getWalletsForTx(chain: string, network: string, tx: Partial<IEVMTransaction>): Promise<ObjectID[]> {
+    const { tos, froms } = this.getAllTouchedAddresses(tx);
+    const addresses = [...new Set(tos.concat(froms).map(a => a.address))];
+    const walletAddys = await WalletAddressStorage.collection
+      .find({ chain, network, address: { $in: addresses } })
+      .toArray();
+    return uniqBy(
+      walletAddys.map(w => w.wallet),
+      w => w.toHexString()
+    );
+  }
+
+  /**
+   * Returns the wallet ids that should be tagged on the tx but aren't yet.
+   */
+  async getNewWalletsForTx(chain: string, network: string, tx: Partial<IEVMTransaction>): Promise<ObjectID[]> {
+    const wallets = await this.getWalletsForTx(chain, network, tx);
+    const existing = new Set((tx.wallets || []).map(w => w.toHexString()));
+    return wallets.filter(w => !existing.has(w.toHexString()));
+  }
+
   getAllTouchedAddresses(tx: Partial<IEVMTransaction>): { tos: IEVMCachedAddress[]; froms: IEVMCachedAddress[] } {
     const { to, from, effects } = tx;
     const toBatch = new Set<string>();
@@ -244,17 +272,7 @@ export class EVMTransactionModel extends BaseTransaction<IEVMTransaction> {
       return Promise.all(
         // Get all "to" and "from" addresses so we can add the any corresponding wallets
         params.txs.map(async (tx: IEVMTransactionInProcess) => {
-          const { tos, froms } = this.getAllTouchedAddresses(tx);
-          const toAddresses = tos.map(a => a.address);
-          const fromAddresses = froms.map(a => a.address);
-
-          const walletsAddys = await WalletAddressStorage.collection
-            .find({ chain, network, address: { $in: [...fromAddresses, ...toAddresses] } })
-            .toArray();
-          const wallets = uniqBy(
-            walletsAddys.map(w => w.wallet),
-            w => w.toHexString()
-          );
+          const wallets = await this.getWalletsForTx(chain, network, tx);
 
           // If config value is set then only store needed tx properties
           let leanTx: IEVMTransaction | IEVMTransactionInProcess = EVMTransactionStorage.stripReceiptLogs(tx);
@@ -476,6 +494,11 @@ export class EVMTransactionModel extends BaseTransaction<IEVMTransaction> {
         unparseableContracts.add(unparseableContract);
       }
     }
+    // A contract that produced any parseable Transfer is authoritative via its logs;
+    // retaining its trace effects too would double count.
+    for (const effect of logEffects) {
+      unparseableContracts.delete(effect.contractAddress!.toLowerCase());
+    }
 
     // Receipt logs are authoritative for ERC20 transfers, so trace/abi-derived transfer
     // effects are replaced with log-derived ones — except for contracts that emitted a
@@ -529,10 +552,6 @@ export class EVMTransactionModel extends BaseTransaction<IEVMTransaction> {
   isFailedReceipt(receipt?: { status?: boolean | number | string | bigint }) {
     const status = receipt?.status;
     return status === false || status === 0 || status === 0n || status === '0' || status === '0x0';
-  }
-
-  _getEffectForErc20TransferLog(log: any, index: number): Effect | undefined {
-    return this._parseErc20TransferLog(log, index).effect;
   }
 
   _parseErc20TransferLog(log: any, index: number): { effect?: Effect; unparseableContract?: string } {

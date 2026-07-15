@@ -11,6 +11,7 @@ import { PopulateReceiptTransform } from '../../../../src/providers/chain-state/
 import { TxidDedupeTransform } from '../../../../src/providers/chain-state/evm/api/transform';
 import { EVMBlockStorage } from '../../../../src/providers/chain-state/evm/models/block';
 import { EVMTransactionStorage } from '../../../../src/providers/chain-state/evm/models/transaction';
+import { WalletAddressStorage } from '../../../../src/models/walletAddress';
 import { Config } from '../../../../src/services/config';
 import { Storage } from '../../../../src/services/storage';
 import { TransformWithEventPipe } from '../../../../src/utils/streamWithEventPipe';
@@ -566,6 +567,7 @@ describe('MultiProviderEVMStateProvider: _buildWalletTransactionsStream tokenAdd
 describe('BaseEVMStateProvider: populateReceipt', function() {
   let cfgStub: sinon.SinonStub;
   let sandbox: sinon.SinonSandbox;
+  let walletAddressFind: sinon.SinonStub;
 
   const busdToken = '0x4Fabb145d64652a948d72533023f6E7A623C7C53';
   const sourceAddress = '0xa81011Ae274eF6deBd3BDaB634102c7b6c2C452D';
@@ -606,7 +608,11 @@ describe('BaseEVMStateProvider: populateReceipt', function() {
   });
 
   after(function() { cfgStub.restore(); });
-  beforeEach(function() { sandbox = sinon.createSandbox(); });
+  beforeEach(function() {
+    sandbox = sinon.createSandbox();
+    walletAddressFind = sandbox.stub().returns({ toArray: async () => [] });
+    sandbox.stub(WalletAddressStorage, 'collection').get(() => ({ find: walletAddressFind }));
+  });
   afterEach(function() { sandbox.restore(); });
 
   it('normalizes fetched receipts on the read path', async function() {
@@ -670,6 +676,67 @@ describe('BaseEVMStateProvider: populateReceipt', function() {
       effects: [expectedEffect],
       receiptLogEffectsProcessed: true
     });
+  });
+
+  it('tags wallets matched by newly derived effects', async function() {
+    const updateOne = sandbox.stub().resolves();
+    sandbox.stub(EVMTransactionStorage, 'collection').get(() => ({ updateOne }));
+    const provider = new BaseEVMStateProvider('ETH');
+    sandbox.stub(provider, 'getReceipt').resolves(receiptWithTransferLog() as any);
+    const walletId = new ObjectId();
+    walletAddressFind.returns({ toArray: async () => [{ wallet: walletId }] });
+    const tx = {
+      _id: new ObjectId(),
+      txid,
+      chain: 'ETH',
+      network: 'mainnet',
+      from: '0x963737C550E70FFe4D59464542a28604eDb2eF9a',
+      to: sourceAddress,
+      value: 0,
+      gasPrice: 20,
+      gasLimit: 1500000,
+      nonce: 79903,
+      transactionIndex: 0,
+      wallets: [],
+      effects: []
+    } as any;
+
+    await provider.populateReceipt(tx);
+
+    // The transfer-log effect touches walletAddress, whose wallet was never tagged at
+    // sync time; the repair must retag or the history query can't surface this tx.
+    expect(tx.wallets).to.deep.equal([walletId]);
+    expect(updateOne.firstCall.args[1].$addToSet).to.deep.equal({ wallets: { $each: [walletId] } });
+    expect(updateOne.firstCall.args[1].$set.effects).to.deep.equal([expectedTransferEffect()]);
+  });
+
+  it('does not retag wallets that are already tagged', async function() {
+    const updateOne = sandbox.stub().resolves();
+    sandbox.stub(EVMTransactionStorage, 'collection').get(() => ({ updateOne }));
+    const provider = new BaseEVMStateProvider('ETH');
+    sandbox.stub(provider, 'getReceipt').resolves(receiptWithTransferLog() as any);
+    const walletId = new ObjectId();
+    walletAddressFind.returns({ toArray: async () => [{ wallet: walletId }] });
+    const tx = {
+      _id: new ObjectId(),
+      txid,
+      chain: 'ETH',
+      network: 'mainnet',
+      from: '0x963737C550E70FFe4D59464542a28604eDb2eF9a',
+      to: sourceAddress,
+      value: 0,
+      gasPrice: 20,
+      gasLimit: 1500000,
+      nonce: 79903,
+      transactionIndex: 0,
+      wallets: [walletId],
+      effects: []
+    } as any;
+
+    await provider.populateReceipt(tx);
+
+    expect(tx.wallets).to.deep.equal([walletId]);
+    expect(updateOne.firstCall.args[1].$addToSet).to.equal(undefined);
   });
 
   it('does not persist populated receipts for external rows without an id', async function() {
