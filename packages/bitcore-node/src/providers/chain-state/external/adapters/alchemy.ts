@@ -22,6 +22,16 @@ const ALCHEMY_CHAIN_ALIASES: Record<string, string> = {
   OP: 'opt'
 };
 
+// A missing or malformed rawContract.value degrades to a 0-amount row (which receipt
+// enrichment corrects downstream) instead of a thrown stream error.
+function safeRawContractValue(transfer: any): string {
+  try {
+    return BigInt(transfer.rawContract?.value || 0).toString();
+  } catch {
+    return '0';
+  }
+}
+
 export class AlchemyAdapter implements IIndexedAPIAdapter {
   readonly name = 'Alchemy';
 
@@ -112,10 +122,13 @@ export class AlchemyAdapter implements IIndexedAPIAdapter {
         chain, network, address, args,
         category: ['erc20'],
         contractAddresses: [tokenAddress],
+        // uniqueId keeps distinct events sharing a tx hash (batch transfers) while still
+        // collapsing the same event returned by both directional queries.
+        dedupeBy: 'uniqueId',
         requestTimeout: this.requestTimeout
       },
       (transfer) => {
-        const _tx = this._transformAssetTransfer({ chain, network, transfer });
+        const _tx = this._transformAssetTransfer({ chain, network, transfer, tokenStream: true });
         const confirmations = args.tipHeight ? args.tipHeight - (_tx.blockHeight ?? 0) + 1 : 0;
         return EVMTransactionStorage._apiTransform({ ..._tx, confirmations }, { object: true });
       }
@@ -223,9 +236,9 @@ export class AlchemyAdapter implements IIndexedAPIAdapter {
   }
 
   private _transformAssetTransfer(params: {
-    chain: string; network: string; transfer: any;
+    chain: string; network: string; transfer: any; tokenStream?: boolean;
   }): IEVMTransactionTransformed {
-    const { chain, network, transfer } = params;
+    const { chain, network, transfer, tokenStream } = params;
 
     const blockNum = transfer.blockNum != null
       ? (typeof transfer.blockNum === 'string' && transfer.blockNum.startsWith('0x')
@@ -246,7 +259,9 @@ export class AlchemyAdapter implements IIndexedAPIAdapter {
       blockHash: '',
       blockTime: safeBlockTime,
       blockTimeNormalized: safeBlockTime,
-      value: transfer.category === 'erc20' ? '0' : BigInt(transfer.rawContract?.value || 0).toString(),
+      // Native history renders token transfers as 0-ETH rows; token history needs the
+      // transfer amount (rawContract.value, in token base units).
+      value: transfer.category === 'erc20' && !tokenStream ? '0' : safeRawContractValue(transfer),
       gasLimit: 0,
       gasPrice: 0,
       fee: 0,
@@ -269,13 +284,16 @@ export class AlchemyAdapter implements IIndexedAPIAdapter {
 
 /**
  * Custom stream for Alchemy's alchemy_getAssetTransfers API.
- * Queries both fromAddress AND toAddress to capture all directions,
- * then deduplicates by uniqueId.
+ * Queries both fromAddress AND toAddress to capture all directions, then deduplicates:
+ * by tx hash for native history (one row per tx, category priority external > internal >
+ * erc20), or by uniqueId for token history (one row per transfer event, so batch
+ * transfers sharing a hash keep every leg while the same event returned by both
+ * directional queries collapses).
  */
 export class AlchemyAssetTransferStream extends ExternalApiStream {
   private sendsPageKey: string | null = null;
   private receivesPageKey: string | null = null;
-  private seenTxHashes: Set<string> = new Set();
+  private seenKeys: Set<string> = new Set();
   private static readonly MAX_DEDUP_ENTRIES = 10000;
   private requestTimeout: number;
 
@@ -288,6 +306,7 @@ export class AlchemyAssetTransferStream extends ExternalApiStream {
       args: any;
       category?: string[];
       contractAddresses?: string[];
+      dedupeBy?: 'hash' | 'uniqueId';
       requestTimeout?: number;
     },
     private transformFn: (transfer: any) => any
@@ -361,15 +380,16 @@ export class AlchemyAssetTransferStream extends ExternalApiStream {
       ].sort((a, b) => (CATEGORY_PRIORITY[a.category] ?? 99) - (CATEGORY_PRIORITY[b.category] ?? 99));
 
       for (const transfer of allTransfers) {
-        if (this.seenTxHashes.has(transfer.hash)) continue;
-        this.seenTxHashes.add(transfer.hash);
+        const dedupeKey = this.getDedupeKey(transfer);
+        if (this.seenKeys.has(dedupeKey)) continue;
+        this.seenKeys.add(dedupeKey);
 
-        if (this.seenTxHashes.size > AlchemyAssetTransferStream.MAX_DEDUP_ENTRIES) {
+        if (this.seenKeys.size > AlchemyAssetTransferStream.MAX_DEDUP_ENTRIES) {
           logger.debug(`Alchemy: dedup set exceeded ${AlchemyAssetTransferStream.MAX_DEDUP_ENTRIES}, evicting oldest entries`);
-          const iterator = this.seenTxHashes.values();
+          const iterator = this.seenKeys.values();
           for (let i = 0; i < 1000; i++) {
             const oldest = iterator.next().value;
-            if (oldest) this.seenTxHashes.delete(oldest);
+            if (oldest) this.seenKeys.delete(oldest);
           }
         }
 
@@ -401,5 +421,14 @@ export class AlchemyAssetTransferStream extends ExternalApiStream {
         this.emit('error', new AdapterError('Alchemy', AdapterErrorCode.UPSTREAM, (error as Error)?.message));
       }
     }
+  }
+
+  private getDedupeKey(transfer: any): string {
+    if (this.alchemyParams.dedupeBy === 'uniqueId') {
+      // A missing uniqueId degrades to hash dedupe — collapsing legs (recoverable
+      // downstream from the receipt) rather than risking duplicated rows.
+      return transfer.uniqueId || transfer.hash;
+    }
+    return transfer.hash;
   }
 }

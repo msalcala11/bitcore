@@ -335,6 +335,105 @@ describe('AlchemyAdapter', function() {
     });
   });
 
+  // --- streamERC20Transfers (token history) ---
+  describe('streamERC20Transfers', function() {
+    const TOKEN_ADDRESS = '0x4fabb145d64652a948d72533023f6e7a623c7c53';
+    const sharedHash = '0xd'.padEnd(66, '0');
+
+    function tokenTransfer(overrides: any = {}) {
+      return {
+        hash: sharedHash, blockNum: '0x1', from: VALID_ADDRESS, to: VALID_FROM,
+        rawContract: { value: '0x5f5e100' }, // 100000000 base units
+        category: 'erc20', uniqueId: `${sharedHash}:log:1`,
+        metadata: { blockTimestamp: '2023-01-01T00:00:00Z' },
+        ...overrides
+      };
+    }
+
+    function streamTokenTransfers() {
+      const stream = adapter.streamERC20Transfers({
+        chain: 'ETH', network: 'mainnet', chainId: '1', address: VALID_ADDRESS,
+        tokenAddress: TOKEN_ADDRESS, args: { startBlock: 0, endBlock: 100 } as any
+      });
+      const items: any[] = [];
+      return new Promise<any[]>((resolve, reject) => {
+        stream.on('data', (d: any) => items.push(d));
+        stream.on('end', () => resolve(items));
+        stream.on('error', reject);
+      });
+    }
+
+    it('should use rawContract.value for token amounts', async function() {
+      axiosPostStub.onCall(0).resolves({ status: 200, data: { result: { transfers: [tokenTransfer()], pageKey: null } } });
+      axiosPostStub.onCall(1).resolves({ status: 200, data: { result: { transfers: [], pageKey: null } } });
+
+      const items = await streamTokenTransfers();
+
+      expect(items).to.have.length(1);
+      expect(items[0].value).to.equal('100000000');
+    });
+
+    it('should fall back to a zero amount for invalid rawContract.value', async function() {
+      const badValue = tokenTransfer({ rawContract: { value: 'not-a-number' } });
+      axiosPostStub.onCall(0).resolves({ status: 200, data: { result: { transfers: [badValue], pageKey: null } } });
+      axiosPostStub.onCall(1).resolves({ status: 200, data: { result: { transfers: [], pageKey: null } } });
+
+      const items = await streamTokenTransfers();
+
+      expect(items).to.have.length(1);
+      expect(items[0].value).to.equal('0');
+    });
+
+    it('should preserve distinct transfer events sharing a tx hash', async function() {
+      const leg1 = tokenTransfer({ uniqueId: `${sharedHash}:log:1`, rawContract: { value: '0x64' } });
+      const leg2 = tokenTransfer({ uniqueId: `${sharedHash}:log:2`, rawContract: { value: '0xc8' } });
+      axiosPostStub.onCall(0).resolves({ status: 200, data: { result: { transfers: [leg1, leg2], pageKey: null } } });
+      axiosPostStub.onCall(1).resolves({ status: 200, data: { result: { transfers: [], pageKey: null } } });
+
+      const items = await streamTokenTransfers();
+
+      expect(items).to.have.length(2);
+      expect(items.map(i => i.value)).to.deep.equal(['100', '200']);
+    });
+
+    it('should collapse the same event returned by both directional queries', async function() {
+      const selfTransfer = tokenTransfer({ to: VALID_ADDRESS, from: VALID_ADDRESS });
+      axiosPostStub.onCall(0).resolves({ status: 200, data: { result: { transfers: [selfTransfer], pageKey: null } } });
+      axiosPostStub.onCall(1).resolves({ status: 200, data: { result: { transfers: [selfTransfer], pageKey: null } } });
+
+      const items = await streamTokenTransfers();
+
+      expect(items).to.have.length(1);
+      expect(items[0].value).to.equal('100000000');
+    });
+
+    it('should fall back to hash dedupe when uniqueId is missing', async function() {
+      const leg1 = tokenTransfer({ uniqueId: undefined, rawContract: { value: '0x64' } });
+      const leg2 = tokenTransfer({ uniqueId: undefined, rawContract: { value: '0xc8' } });
+      axiosPostStub.onCall(0).resolves({ status: 200, data: { result: { transfers: [leg1, leg2], pageKey: null } } });
+      axiosPostStub.onCall(1).resolves({ status: 200, data: { result: { transfers: [], pageKey: null } } });
+
+      const items = await streamTokenTransfers();
+
+      // Degrades toward collapsing legs (recoverable from the receipt downstream),
+      // never toward duplicating rows.
+      expect(items).to.have.length(1);
+    });
+
+    it('should query both directions with the erc20 category and contract filter', async function() {
+      axiosPostStub.resolves({ status: 200, data: { result: { transfers: [], pageKey: null } } });
+
+      await streamTokenTransfers();
+
+      const fromCall = axiosPostStub.getCalls().find(c => c.args[1].params[0].fromAddress);
+      const toCall = axiosPostStub.getCalls().find(c => c.args[1].params[0].toAddress);
+      expect(fromCall!.args[1].params[0].category).to.deep.equal(['erc20']);
+      expect(toCall!.args[1].params[0].category).to.deep.equal(['erc20']);
+      expect(fromCall!.args[1].params[0].contractAddresses).to.deep.equal([TOKEN_ADDRESS]);
+      expect(toCall!.args[1].params[0].contractAddresses).to.deep.equal([TOKEN_ADDRESS]);
+    });
+  });
+
   // --- getBlockNumberByDate ---
   describe('getBlockNumberByDate', function() {
     it('should delegate to EthDater and return its block', async function() {
