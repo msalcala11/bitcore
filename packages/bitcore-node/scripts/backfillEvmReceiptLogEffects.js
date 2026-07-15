@@ -2,17 +2,24 @@
 
 import readline from 'readline';
 import util from 'util';
+import { computeBackfillExitCode } from '../build/src/providers/chain-state/evm/backfillExitCode.js';
 import { EVMTransactionStorage } from '../build/src/providers/chain-state/evm/models/transaction.js';
 import { addReceiptsToTxs } from '../build/src/providers/chain-state/evm/p2p/receipts.js';
 import { Storage } from '../build/src/services/storage.js';
 
 let shutdown = false;
+const runtimeExitState = {
+  skippedTransactions: 0,
+  unwrittenTransactions: 0,
+  interrupted: false
+};
 process.on('SIGINT', () => {
   if (shutdown) {
     console.log('Force exiting...');
     process.exit(1);
   }
   shutdown = true;
+  runtimeExitState.interrupted = true;
   console.log('Gracefully shutting down...');
 });
 
@@ -172,7 +179,6 @@ Storage.start()
 
     let countUpdated = 0;
     let countSeen = 0;
-    let countSkippedTxs = 0;
     let blockTxs = [];
 
     const flushBlock = async () => {
@@ -184,15 +190,15 @@ Storage.start()
         const { written, unfetchable, notModified } = await processBlockTxs(getWeb3, blockTxs);
         countUpdated += written;
         if (unfetchable) {
-          countSkippedTxs += unfetchable;
+          runtimeExitState.skippedTransactions += unfetchable;
           console.error(`\n${unfetchable} tx(s) in block ${blockHeight} have unfetchable receipts (will retry on next run)`);
         }
         if (notModified) {
-          countSkippedTxs += notModified;
+          runtimeExitState.unwrittenTransactions += notModified;
           console.error(`\n${notModified} tx(s) in block ${blockHeight} were not updated (write failure, or already repaired concurrently); retried on the next run only if still unflagged`);
         }
       } catch (err) {
-        countSkippedTxs += blockTxs.length;
+        runtimeExitState.skippedTransactions += blockTxs.length;
         console.error(`\nFailed to backfill block ${blockHeight} (will retry on next run): ${err.message || err}`);
       }
       blockTxs = [];
@@ -217,17 +223,15 @@ Storage.start()
     }
 
     console.log(`\n${dryRun ? 'Would have updated' : 'Updated'} ${countUpdated} of ${countSeen} transactions.`);
-    if (countSkippedTxs) {
-      console.log(`${countSkippedTxs} tx(s) were left unprocessed; re-run to retry them.`);
+    const countIncompleteTxs = runtimeExitState.skippedTransactions + runtimeExitState.unwrittenTransactions;
+    if (countIncompleteTxs) {
+      console.log(`${countIncompleteTxs} tx(s) were left unprocessed; re-run to retry them.`);
     }
-    // Scheduled runs key off the exit code: 2 = incomplete but retryable.
-    if (countSkippedTxs || shutdown) {
-      process.exitCode = 2;
-    }
+    process.exitCode = computeBackfillExitCode(runtimeExitState);
   })
   .catch(err => {
     console.error(err);
-    process.exitCode = 1;
+    process.exitCode = computeBackfillExitCode({ ...runtimeExitState, fatal: true });
   })
   .finally(() => {
     rl.close();

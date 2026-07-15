@@ -1,11 +1,8 @@
 import { expect } from 'chai';
 import { spawnSync } from 'child_process';
 import path from 'path';
+import { computeBackfillExitCode } from '../../src/providers/chain-state/evm/backfillExitCode';
 
-// Exercises the script's argument-validation exit codes for real: scheduled
-// automation keys off them (0 complete, 1 usage/fatal, 2 incomplete). The
-// incomplete/fatal runtime paths need a database and are covered by review +
-// the runbook; validation runs before Storage.start so these spawn cleanly.
 describe('backfillEvmReceiptLogEffects exit codes', function() {
   this.timeout(30000);
   const script = path.resolve(__dirname, '../../../scripts/backfillEvmReceiptLogEffects.js');
@@ -14,6 +11,34 @@ describe('backfillEvmReceiptLogEffects exit codes', function() {
     return spawnSync('node', [script, ...args], { env: process.env, encoding: 'utf8' });
   }
 
+  it('maps clean completion to 0', function() {
+    expect(computeBackfillExitCode({})).to.equal(0);
+  });
+
+  it('maps skipped or unwritten transactions to 2', function() {
+    expect(computeBackfillExitCode({ skippedTransactions: 1 })).to.equal(2);
+    expect(computeBackfillExitCode({ unwrittenTransactions: 1 })).to.equal(2);
+  });
+
+  it('maps interruption to 2', function() {
+    expect(computeBackfillExitCode({ interrupted: true })).to.equal(2);
+  });
+
+  it('maps fatal failure to 1', function() {
+    expect(computeBackfillExitCode({ fatal: true })).to.equal(1);
+  });
+
+  it('gives fatal failure precedence over incomplete state', function() {
+    expect(computeBackfillExitCode({
+      fatal: true,
+      skippedTransactions: 1,
+      unwrittenTransactions: 1,
+      interrupted: true
+    })).to.equal(1);
+  });
+
+  // Keep the real process boundary covered for usage validation. These paths run
+  // before Storage.start, so they do not require MongoDB or an RPC provider.
   it('exits 0 for --help', function() {
     const result = runScript(['--help']);
     expect(result.status).to.equal(0);
