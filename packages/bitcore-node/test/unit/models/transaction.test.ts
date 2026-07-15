@@ -1015,6 +1015,43 @@ describe('Transaction Model', function() {
         expect(rows[0].satoshis).to.equal(bigAmount);
       });
 
+      it('should emit native receives for contract wallets with internal self-calls', async () => {
+        const walletAddress = Web3.utils.toChecksumAddress('0xa91cfe0dcad33f36f3c9428d48eccbd8a71951b4');
+        const counterpartyAddress = Web3.utils.toChecksumAddress('0x8489935991b0eac9ce9e9330d35b9734ecdf2cad');
+        const rows = await collectEvmListTransactionRows([walletAddress], undefined, [{
+          _id: new ObjectId(),
+          txid: '0xcontract-wallet-deposit',
+          chain: 'ETH',
+          network: 'mainnet',
+          blockHeight: 15950646,
+          blockTimeNormalized: new Date('2022-11-12T01:26:59.000Z'),
+          from: counterpartyAddress,
+          to: walletAddress,
+          value: 1000000000000000000,
+          fee: 622112000000000,
+          gasPrice: 16000000000,
+          gasLimit: 160000,
+          nonce: 5,
+          transactionIndex: 0,
+          data: Buffer.from(''),
+          internal: [],
+          calls: [],
+          receipt: { status: true },
+          // The deposit's trace contains an internal self-call of the contract wallet;
+          // it must not shadow the receive of the deposited value.
+          effects: [{
+            to: walletAddress,
+            from: walletAddress,
+            amount: '5',
+            callStack: '0_0'
+          }]
+        }]);
+
+        expect(rows).to.have.length(1);
+        expect(rows[0].category).to.equal('receive');
+        expect(rows[0].satoshis).to.equal('1000000000000000000');
+      });
+
       it('should not include wallet-to-wallet token moves in send or receive totals', async () => {
         const walletAddress = Web3.utils.toChecksumAddress('0xa91cfe0dcad33f36f3c9428d48eccbd8a71951b4');
         const changeAddress = Web3.utils.toChecksumAddress('0x8489935991b0eac9ce9e9330d35b9734ecdf2cad');
@@ -1521,6 +1558,39 @@ describe('Transaction Model', function() {
           contractAddress: busdToken,
           callStack: '0'
         }]);
+      });
+
+      it('should not keep traced ERC20 effects when the contract also emitted a parseable Transfer', async () => {
+        const tx = missingReceiveTx({
+          calls: [{
+            from: missingReceiveSender,
+            to: busdToken,
+            value: '0',
+            depth: '0',
+            type: 'CALL',
+            abiType: {
+              type: 'ERC20',
+              name: 'transfer',
+              params: [
+                { name: '_to', type: 'address', value: missingReceiveWallet },
+                { name: '_value', type: 'uint256', value: missingReceiveAmount }
+              ]
+            }
+          }],
+          receipt: {
+            ...missingReceiveTx().receipt,
+            // One canonical Transfer and one unparseable one from the same contract:
+            // the parseable log makes the contract authoritative via its logs.
+            logs: [
+              receiptTransferLog(),
+              receiptTransferLog({ topics: [transferEventTopic], logIndex: 1 })
+            ]
+          }
+        });
+
+        const effects = EVMTransactionStorage.getEffects(tx as any);
+
+        expect(effects).to.deep.equal([expectedMissingReceiveEffect()]);
       });
 
       it('should still remove traced ERC20 effects for ERC721-style Transfer logs', async () => {

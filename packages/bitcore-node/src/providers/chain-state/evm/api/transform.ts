@@ -98,12 +98,15 @@ export class EVMListTransactionsStream extends TransformWithEventPipe {
           jsonStringify(baseTx) + '\n'
         );
       } else {
-        // Same-address self-transfers initiated by a third party (relayer, AA bundler)
-        // are 'move' rows; sender-initiated ones land in the move branch above because
-        // token pipelines rewrite to/from to the transfer endpoints. Transfers between
-        // two DIFFERENT addresses of one query's address set intentionally emit nothing:
-        // EVM wallets are queried per address, so each leg is served by its own query.
-        const selfTransferEffects = (transaction.effects || []).filter(effect =>
+        // Token streams only: same-address self-transfers initiated by a third party
+        // (relayer, AA bundler) are 'move' rows; sender-initiated ones land in the move
+        // branch above because token pipelines rewrite to/from to the transfer endpoints.
+        // Never on native streams — there this branch would shadow the weReceived
+        // fallback (e.g. a deposit into a contract wallet whose trace has an internal
+        // self-call). Transfers between two DIFFERENT addresses of one query's address
+        // set intentionally emit nothing: EVM wallets are queried per address, so each
+        // leg is served by its own query.
+        const selfTransferEffects = !this.tokenAddress ? [] : (transaction.effects || []).filter(effect =>
           this.isWalletAddress(effect.to) &&
           effect.from?.toLowerCase() === effect.to?.toLowerCase() &&
           this.matchesTokenAddress(effect.contractAddress)
