@@ -70,6 +70,7 @@ describe('MATIC Chain State Provider', function() {
     sandbox.stub(MATIC, 'getReceipt').resolves({ gasUsed: 21000 });
     sandbox.stub(MATIC, 'getLocalTip').resolves({ height: 1 });
     mockModel('transactions', mockTx);
+    mockModel('walletaddresses', []);
     const found = await MATIC.getTransaction({ chain: 'MATIC', network: 'testnet', txId: '123' });
     expect(found).to.exist;
     expect(found!.fee).to.eq(21000 * 10);

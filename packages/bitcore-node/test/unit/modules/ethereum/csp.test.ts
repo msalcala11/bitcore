@@ -80,6 +80,7 @@ describe('ETH Chain State Provider', function() {
     sandbox.stub(ETH, 'getReceipt').resolves({ gasUsed: 21000 });
     sandbox.stub(ETH, 'getLocalTip').resolves({ height: 1 });
     mockModel('transactions', mockTx);
+    mockModel('walletaddresses', []);
     const found = await ETH.getTransaction({ chain: 'ETH', network: 'testnet', txId: '123' });
     expect(found).to.exist;
     expect(found!.fee).to.eq(21000 * 10);
