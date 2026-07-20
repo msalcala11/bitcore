@@ -434,6 +434,19 @@ describe('AlchemyAdapter', function() {
 
       expect(items).to.have.length(1);
       expect(items[0].value).to.equal('100000000');
+      expect(items[0].eventId).to.equal(`alchemy:${sharedHash}:log:1`);
+    });
+
+    it('should prefer and normalize a canonical log index for event identity', async function() {
+      axiosPostStub.onCall(0).resolves({
+        status: 200,
+        data: { result: { transfers: [tokenTransfer({ logIndex: '0x07' })], pageKey: null } }
+      });
+      axiosPostStub.onCall(1).resolves({ status: 200, data: { result: { transfers: [], pageKey: null } } });
+
+      const items = await streamTokenTransfers();
+
+      expect(items[0].eventId).to.equal('log:7');
     });
 
     it('should fall back to a zero amount for invalid rawContract.value', async function() {
@@ -457,6 +470,10 @@ describe('AlchemyAdapter', function() {
 
       expect(items).to.have.length(2);
       expect(items.map(i => i.value)).to.deep.equal(['100', '200']);
+      expect(items.map(i => i.eventId)).to.deep.equal([
+        `alchemy:${sharedHash}:log:1`,
+        `alchemy:${sharedHash}:log:2`
+      ]);
     });
 
     it('should collapse the same event returned by both directional queries', async function() {

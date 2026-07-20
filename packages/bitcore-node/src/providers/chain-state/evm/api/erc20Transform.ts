@@ -27,6 +27,14 @@ export function splitTxByTokenEffects(
       _tx.initialFrom = rootSender;
     }
     _tx.callStack = effect.callStack;
+    const logIndex = effect.callStack?.match(/^log:(\d+)$/)?.[1];
+    if (logIndex !== undefined) {
+      _tx.eventId = `log:${BigInt(logIndex).toString()}`;
+    } else {
+      // An external provider's opaque event id identified the row that triggered
+      // enrichment, not every receipt-derived effect emitted from that row.
+      delete _tx.eventId;
+    }
     rows.push(_tx);
   }
   return rows;
@@ -62,6 +70,11 @@ export class Erc20RelatedFilterTransform extends TransformWithEventPipe {
 
       // Create a tx object for each erc20 transfer
       for (const row of splitTxByTokenEffects(tx, tokenRelatedInternalTxs)) {
+        if (tx.receiptLogEffectsIncompleteContracts?.some(contract => contract.toLowerCase() === this.tokenAddress.toLowerCase())) {
+          // DB-only history cannot reconstruct an absent effect. Known rows remain
+          // visible, but consumers must not mistake them for a complete token history.
+          row.tokenHistoryIncomplete = true;
+        }
         this.push(row);
       }
     }

@@ -825,6 +825,24 @@ describe('Transaction Model', function() {
         expect(rows.map(row => row.callStack)).to.deep.equal(['log:7', 'log:8']);
       });
 
+      it('should flag known DB token rows when derivation was incomplete for the requested contract', async () => {
+        const walletAddress = Web3.utils.toChecksumAddress('0xa91cfe0dcad33f36f3c9428d48eccbd8a71951b4');
+        const tx = missingReceiveTx({
+          effects: [expectedMissingReceiveEffect()],
+          receiptLogEffectsProcessed: true,
+          receiptLogEffectsIncompleteContracts: [busdToken.toLowerCase()]
+        });
+
+        const rows = await collectErc20TokenHistoryRows([walletAddress], busdToken, [tx]);
+
+        expect(rows).to.have.length(1);
+        expect(rows[0].satoshis).to.equal(missingReceiveAmount);
+        expect(rows[0].tokenHistoryIncomplete).to.equal(true);
+        expect(rows[0].tokenHistorySource).to.equal('derived');
+        expect(rows[0].eventId).to.equal('log:0');
+        expect(rows[0].address).to.equal(walletAddress);
+      });
+
       it('should use the root value for native receives that also contain token effects', async () => {
         const busdToken = Web3.utils.toChecksumAddress('0x4fabb145d64652a948d72533023f6e7a623c7c53');
         const walletAddress = Web3.utils.toChecksumAddress('0xa91cfe0dcad33f36f3c9428d48eccbd8a71951b4');
@@ -955,6 +973,55 @@ describe('Transaction Model', function() {
             // Metadata still clones onto the duplicate; the arithmetic stays value-based.
             expect(rows.map(row => row.fee)).to.deep.equal([2000, 2000]);
             expect(rows.map(row => row.value)).to.deep.equal(['100', '200']);
+          });
+
+          it('should pin raw when the requested token has an incomplete receipt parse', async () => {
+            const populateReceipt = sandbox.stub().callsFake(async tx => ({
+              ...(await enrichmentOf([walletSendEffect('100')])(tx)),
+              receiptLogEffectsIncompleteContracts: [busdToken.toLowerCase()]
+            }));
+            const populate = new PopulateReceiptTransform({ populateReceipt } as any, {
+              walletAddresses: [walletAddress],
+              tokenAddress: busdToken
+            });
+            const rows = new Array<any>();
+            const collector = await collectRows(populate, populate, rows);
+            collector.write(providerRow('0xpartial', '100'));
+            collector.write(providerRow('0xpartial', '200'));
+            await collector.end();
+
+            expect(rows.map(row => row.tokenHistoryMode)).to.deep.equal(['raw', 'raw']);
+            expect(rows.map(row => row.receiptLogEffectsIncompleteContracts)).to.deep.equal([
+              [busdToken.toLowerCase()],
+              [busdToken.toLowerCase()]
+            ]);
+          });
+
+          it('should apply a cached unknown outcome by clearing stale duplicate state', async () => {
+            const populateReceipt = sandbox.stub().callsFake(async tx => ({
+              ...tx,
+              receipt: { status: true },
+              effects: [nonWalletEffect('7')],
+              receiptLogEffectsProcessed: undefined,
+              receiptLogEffectsIncompleteContracts: undefined
+            }));
+            const populate = new PopulateReceiptTransform({ populateReceipt } as any, {
+              walletAddresses: [walletAddress],
+              tokenAddress: busdToken
+            });
+            const rows = new Array<any>();
+            const collector = await collectRows(populate, populate, rows);
+            collector.write(providerRow('0xunknown', '100'));
+            collector.write(providerRow('0xunknown', '200', {
+              receiptLogEffectsProcessed: true,
+              receiptLogEffectsIncompleteContracts: [busdToken.toLowerCase()]
+            }));
+            await collector.end();
+
+            expect(populateReceipt.callCount).to.equal(1);
+            expect(rows.map(row => row.tokenHistoryMode)).to.deep.equal(['raw', 'raw']);
+            expect(rows.map(row => row.receiptLogEffectsProcessed)).to.deep.equal([undefined, undefined]);
+            expect(rows.map(row => row.receiptLogEffectsIncompleteContracts)).to.deep.equal([undefined, undefined]);
           });
 
           it('should pass retry options through to populateReceipt', async () => {
@@ -1092,6 +1159,7 @@ describe('Transaction Model', function() {
             expect(rows.map(row => row.from)).to.deep.equal([walletAddress, walletAddress]);
             expect(rows.map(row => row.callStack)).to.deep.equal(['log:100', 'log:200']);
             expect(rows.map(row => row.effects)).to.deep.equal([[effects[0]], [effects[1]]]);
+            expect(rows.map(row => row.eventId)).to.deep.equal(['log:100', 'log:200']);
             // The tx-level sender differed from the effect sender, so it is preserved.
             expect(rows.map(row => row.initialFrom)).to.deep.equal([otherAddress, otherAddress]);
           });
@@ -1119,6 +1187,7 @@ describe('Transaction Model', function() {
             ]);
 
             expect(rows.map(row => row.value)).to.deep.equal(['100']);
+            expect(rows[0].tokenHistoryMode).to.equal('raw');
           });
         });
 
@@ -1205,6 +1274,32 @@ describe('Transaction Model', function() {
 
             expect(rows.map(row => row.category)).to.deep.equal(['send', 'send']);
             expect(rows.map(row => row.satoshis)).to.deep.equal(['-100', '-200']);
+          });
+
+          it('should keep partial-parse provider move legs distinct and mark them incomplete', async () => {
+            const parsedSelfEffect = {
+              ...walletSendEffect('5', walletAddress),
+              to: walletAddress,
+              callStack: 'log:7'
+            };
+            const populateReceipt = sandbox.stub().callsFake(async tx => ({
+              ...tx,
+              fee: 2000,
+              receipt: { status: true },
+              effects: [parsedSelfEffect],
+              receiptLogEffectsProcessed: true,
+              receiptLogEffectsIncompleteContracts: [busdToken.toLowerCase()]
+            }));
+            const rows = await runComposedPipeline(populateReceipt, [
+              providerRow('0xpartial-move', '5', { to: walletAddress, eventId: 'log:7' }),
+              providerRow('0xpartial-move', '7', { to: walletAddress, eventId: 'alchemy:opaque-8' })
+            ]);
+
+            expect(rows.map(row => row.category)).to.deep.equal(['move', 'move']);
+            expect(rows.map(row => row.satoshis)).to.deep.equal(['5', '7']);
+            expect(rows.map(row => row.eventId)).to.deep.equal(['log:7', 'alchemy:opaque-8']);
+            expect(rows.map(row => row.tokenHistorySource)).to.deep.equal(['provider', 'provider']);
+            expect(rows.map(row => row.tokenHistoryIncomplete)).to.deep.equal([true, true]);
           });
         });
       });
@@ -1625,9 +1720,15 @@ describe('Transaction Model', function() {
 
     describe('getEffects', function() {
       it('should get ERC20 transfer effects from successful receipt logs', async () => {
-        const effects = EVMTransactionStorage.getEffects(missingReceiveTx() as any);
+        const tx = missingReceiveTx({
+          receiptLogEffectsProcessed: true,
+          receiptLogEffectsIncompleteContracts: [busdToken.toLowerCase()]
+        });
+        const effects = EVMTransactionStorage.getEffects(tx as any);
 
         expect(effects).to.deep.equal([expectedMissingReceiveEffect()]);
+        expect((tx as any).receiptLogEffectsProcessed).to.equal(true);
+        expect((tx as any).receiptLogEffectsIncompleteContracts).to.equal(undefined);
       });
 
       it('should ignore zero-amount ERC20 transfer logs', async () => {
@@ -1664,13 +1765,15 @@ describe('Transaction Model', function() {
           receipt: {
             ...missingReceiveTx().receipt,
             status: false
-          }
+          },
+          receiptLogEffectsIncompleteContracts: [busdToken.toLowerCase()]
         });
 
         const effects = EVMTransactionStorage.getEffects(tx as any);
 
         expect(effects).to.deep.equal([]);
         expect((tx as any).receiptLogEffectsProcessed).to.equal(true);
+        expect((tx as any).receiptLogEffectsIncompleteContracts).to.equal(undefined);
       });
 
       it('should not mark successful stripped receipts as receipt-log processed', async () => {
@@ -1698,7 +1801,9 @@ describe('Transaction Model', function() {
             blockNumber: 15777684,
             cumulativeGasUsed: 0,
             gasUsed: 0
-          }
+          },
+          receiptLogEffectsProcessed: true,
+          receiptLogEffectsIncompleteContracts: [busdToken.toLowerCase()]
         });
 
         const effects = EVMTransactionStorage.getEffects(tx as any);
@@ -1712,6 +1817,7 @@ describe('Transaction Model', function() {
           callStack: '0'
         }]);
         expect((tx as any).receiptLogEffectsProcessed).to.equal(undefined);
+        expect((tx as any).receiptLogEffectsIncompleteContracts).to.equal(undefined);
       });
 
       it('should replace traced ERC20 effects with receipt-log effects', async () => {
@@ -1817,12 +1923,15 @@ describe('Transaction Model', function() {
           receipt: {
             ...missingReceiveTx().receipt,
             logs: []
-          }
+          },
+          receiptLogEffectsIncompleteContracts: [busdToken.toLowerCase()]
         });
 
         const effects = EVMTransactionStorage.getEffects(tx as any);
 
         expect(effects).to.deep.equal([]);
+        expect((tx as any).receiptLogEffectsProcessed).to.equal(true);
+        expect((tx as any).receiptLogEffectsIncompleteContracts).to.equal(undefined);
       });
 
       it('should keep traced ERC20 effects when the Transfer log is non-canonical', async () => {
@@ -1859,6 +1968,34 @@ describe('Transaction Model', function() {
           contractAddress: busdToken,
           callStack: '0'
         }]);
+        expect((tx as any).receiptLogEffectsProcessed).to.equal(true);
+        expect((tx as any).receiptLogEffectsIncompleteContracts).to.deep.equal([busdToken.toLowerCase()]);
+      });
+
+      it('should preserve the pre-derivation effects and clear stale state when derivation throws', async () => {
+        const originalEffect = {
+          to: missingReceiveWallet,
+          from: missingReceiveSender,
+          amount: '3',
+          callStack: 'legacy'
+        };
+        const tx = missingReceiveTx({
+          effects: [originalEffect],
+          receiptLogEffectsProcessed: true,
+          receiptLogEffectsIncompleteContracts: [busdToken.toLowerCase()]
+        });
+        sandbox.stub(EVMTransactionStorage as any, '_parseErc20TransferLog').throws(new Error('decode failed'));
+
+        const update = EVMTransactionStorage.deriveReceiptLogEffectsUpdate(tx as any);
+
+        expect(update.outcome).to.deep.equal({ kind: 'not-derived', reason: 'effect-derivation-failed' });
+        expect(tx.effects).to.deep.equal([originalEffect]);
+        expect((tx as any).receiptLogEffectsProcessed).to.equal(undefined);
+        expect((tx as any).receiptLogEffectsIncompleteContracts).to.equal(undefined);
+        expect(update.update.$unset).to.deep.equal({
+          receiptLogEffectsProcessed: '',
+          receiptLogEffectsIncompleteContracts: ''
+        });
       });
 
       it('should not keep traced ERC20 effects when the contract also emitted a parseable Transfer', async () => {
@@ -2059,6 +2196,79 @@ describe('Transaction Model', function() {
 
         expect(storedTx.effects).to.deep.equal([expectedMissingReceiveEffect()]);
         expect(storedTx.receipt!.logs).to.equal(undefined);
+      });
+
+      it('should atomically clear stale receipt state when persistence follows a fetch failure', async () => {
+        sandbox.stub(Config, 'chainConfig').returns({ leanTransactionStorage: false } as any);
+        sandbox.stub(WalletAddressStorage, 'collection').get(() => ({
+          find: sandbox.stub().returns({ toArray: sandbox.stub().resolves([]) })
+        }));
+        const tx = missingReceiveTx({
+          effects: [{ to: missingReceiveWallet, from: missingReceiveSender, amount: '3', callStack: '0' }],
+          receiptLogEffectsProcessed: true,
+          receiptLogEffectsIncompleteContracts: [busdToken.toLowerCase()]
+        });
+        const txid = tx.txid.toLowerCase();
+
+        const ops = await EVMTransactionStorage.addTransactions({
+          txs: [tx as any],
+          failedReceiptTxids: new Set([txid]),
+          receiptEffectOutcomes: new Map([[txid, { kind: 'not-derived', reason: 'missing-logs' }]]),
+          height: tx.blockHeight,
+          blockTimeNormalized: tx.blockTimeNormalized,
+          chain: 'ETH',
+          network: 'mainnet',
+          initialSyncComplete: true
+        });
+        const update: any = ops[0].updateOne.update;
+
+        expect(update.$set.effects).to.deep.equal(tx.effects);
+        expect(update.$unset).to.deep.equal({
+          receipt: '',
+          receiptLogEffectsProcessed: '',
+          receiptLogEffectsIncompleteContracts: ''
+        });
+        expect(update.$set).not.to.have.property('receipt');
+        expect(update.$set).not.to.have.property('receiptLogEffectsProcessed');
+        expect(update.$set).not.to.have.property('receiptLogEffectsIncompleteContracts');
+      });
+
+      it('should remove stale receipt state in the persisted transaction after a fetch failure', async () => {
+        sandbox.stub(Config, 'chainConfig').returns({ leanTransactionStorage: false } as any);
+        const tx = missingReceiveTx({
+          _id: new ObjectId(),
+          txid: '0xreceipt-fetch-failure-persistence',
+          effects: [{ to: missingReceiveWallet, from: missingReceiveSender, amount: '3', callStack: '0' }],
+          receipt: { status: true },
+          receiptLogEffectsProcessed: true,
+          receiptLogEffectsIncompleteContracts: [busdToken.toLowerCase()]
+        });
+        const txid = tx.txid.toLowerCase();
+        await EVMTransactionStorage.collection.insertOne(tx as any);
+
+        try {
+          delete (tx as any).receipt;
+          delete (tx as any).receiptLogEffectsProcessed;
+          delete (tx as any).receiptLogEffectsIncompleteContracts;
+          await EVMTransactionStorage.batchImport({
+            txs: [tx as any],
+            failedReceiptTxids: new Set([txid]),
+            receiptEffectOutcomes: new Map([[txid, { kind: 'not-derived', reason: 'missing-logs' }]]),
+            height: tx.blockHeight,
+            blockTimeNormalized: tx.blockTimeNormalized,
+            chain: 'ETH',
+            network: 'mainnet',
+            initialSyncComplete: false
+          });
+
+          const stored = await EVMTransactionStorage.collection.findOne({ txid: tx.txid, chain: 'ETH', network: 'mainnet' });
+          expect(stored!.effects).to.deep.equal(tx.effects);
+          expect(stored!.receipt).to.equal(undefined);
+          expect(stored!.receiptLogEffectsProcessed).to.equal(undefined);
+          expect(stored!.receiptLogEffectsIncompleteContracts).to.equal(undefined);
+        } finally {
+          await EVMTransactionStorage.collection.deleteMany({ txid: tx.txid, chain: 'ETH', network: 'mainnet' });
+        }
       });
 
       it('should get effects for simple USDC transaction', async () => {

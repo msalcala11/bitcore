@@ -8,7 +8,7 @@ import { BaseP2PWorker } from '../../../../services/p2p';
 import { wait } from '../../../../utils';
 import { BaseEVMStateProvider } from '../api/csp';
 import { EVMBlockModel, EVMBlockStorage } from '../models/block';
-import { EVMTransactionModel, EVMTransactionStorage } from '../models/transaction';
+import { EVMTransactionModel, EVMTransactionStorage, type ReceiptEffectOutcome } from '../models/transaction';
 import { addReceiptsToTxs } from './receipts';
 import { type IRpc, Rpcs } from './rpcs';
 import { MultiThreadSync } from './sync';
@@ -212,7 +212,14 @@ export class EVMP2pWorker extends BaseP2PWorker<IEVMBlock> {
     return this.rpc!.getBlock(height);
   }
 
-  async processBlock(block: IEVMBlock, transactions: IEVMTransactionInProcess[]): Promise<any> {
+  async processBlock(
+    block: IEVMBlock,
+    transactions: IEVMTransactionInProcess[],
+    receiptMetadata: {
+      failedReceiptTxids?: Set<string>;
+      receiptEffectOutcomes?: Map<string, ReceiptEffectOutcome>;
+    } = {}
+  ): Promise<any> {
     await this.blockModel.addBlock({
       chain: this.chain,
       network: this.network,
@@ -220,7 +227,8 @@ export class EVMP2pWorker extends BaseP2PWorker<IEVMBlock> {
       parentChain: this.chainConfig.parentChain,
       initialSyncComplete: this.initialSyncComplete,
       block,
-      transactions
+      transactions,
+      ...receiptMetadata
     });
     if (!this.syncing) {
       logger.info(`Added block ${block.hash}`, {
@@ -293,8 +301,8 @@ export class EVMP2pWorker extends BaseP2PWorker<IEVMBlock> {
           await wait(1000);
           continue;
         }
-        const { convertedBlock, convertedTxs } = await this.convertBlock(block);
-        await this.processBlock(convertedBlock, convertedTxs);
+        const { convertedBlock, convertedTxs, failedReceiptTxids, receiptEffectOutcomes } = await this.convertBlock(block);
+        await this.processBlock(convertedBlock, convertedTxs, { failedReceiptTxids, receiptEffectOutcomes });
         if (currentHeight === bestBlock) {
           bestBlock = Number(await this.web3!.eth.getBlockNumber());
         }
@@ -375,13 +383,13 @@ export class EVMP2pWorker extends BaseP2PWorker<IEVMBlock> {
     const convertedTxs = block.transactions.map(t => this.txModel.convertRawTx(this.chain, this.network, t, convertedBlock));
     const traceTxs = await this.rpc!.getTransactionsFromBlock(convertedBlock.height);
     this.rpc!.reconcileTraces(convertedBlock, convertedTxs, traceTxs);
-    await this.addReceiptsToTxs(convertedTxs);
-    this.txModel.addEffectsToTxs(convertedTxs);
-    return { convertedBlock, convertedTxs };
+    const failedReceiptTxids = await this.addReceiptsToTxs(convertedTxs);
+    const receiptEffectOutcomes = this.txModel.addEffectsToTxs(convertedTxs);
+    return { convertedBlock, convertedTxs, failedReceiptTxids, receiptEffectOutcomes };
   }
 
   async addReceiptsToTxs(txs: IEVMTransactionInProcess[]) {
-    await addReceiptsToTxs(this.web3!, txs, {
+    return addReceiptsToTxs(this.web3!, txs, {
       concurrency: this.chainConfig.receiptFetchConcurrency,
       retries: this.chainConfig.receiptFetchRetries,
       retryDelayMs: this.chainConfig.receiptFetchRetryDelayMs

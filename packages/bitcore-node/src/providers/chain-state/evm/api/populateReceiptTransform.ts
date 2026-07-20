@@ -2,10 +2,17 @@ import logger from '../../../../logger';
 import { MongoBound } from '../../../../models/base';
 import { TransformWithEventPipe } from '../../../../utils/streamWithEventPipe';
 import { IEVMTransaction } from '../types';
-import { BaseEVMStateProvider } from './csp';
 import { TokenHistoryMode, getWalletRelevantTokenEffects } from './transform';
+import type { BaseEVMStateProvider } from './csp';
 
-type ReceiptEnrichment = Pick<IEVMTransaction, 'effects' | 'fee' | 'receipt' | 'receiptLogEffectsProcessed'>;
+type CachedReceiptCompleteness =
+  | { kind: 'complete' }
+  | { kind: 'incomplete'; contracts: string[] }
+  | { kind: 'unknown' };
+
+type ReceiptEnrichment = Pick<IEVMTransaction, 'effects' | 'fee' | 'receipt'> & {
+  completeness: CachedReceiptCompleteness;
+};
 
 // Payload-free per-txid arithmetic mode. Tracked separately from the enrichment
 // snapshot cache: evicting a (large) snapshot must never flip a (tiny) mode record,
@@ -124,6 +131,7 @@ export class PopulateReceiptTransform extends TransformWithEventPipe {
 
     const expandable = enriched &&
       !!tx.receiptLogEffectsProcessed &&
+      !tx.receiptLogEffectsIncompleteContracts?.some(contract => contract.toLowerCase() === this.tokenAddressLower) &&
       getWalletRelevantTokenEffects(tx.effects, this.walletAddressSet, this.tokenAddressLower).length > 0;
     this.rememberMode(txid, expandable ? { kind: 'expanded' } : { kind: 'raw' });
     this.setMode(tx, expandable ? 'expand' : 'raw');
@@ -156,7 +164,7 @@ export class PopulateReceiptTransform extends TransformWithEventPipe {
       effects: this.cloneEffects(tx.effects),
       fee: tx.fee,
       receipt: this.cloneReceipt(tx.receipt),
-      receiptLogEffectsProcessed: tx.receiptLogEffectsProcessed
+      completeness: this.snapshotCompleteness(tx)
     };
   }
 
@@ -170,9 +178,25 @@ export class PopulateReceiptTransform extends TransformWithEventPipe {
     if (enrichment.receipt !== undefined) {
       tx.receipt = this.cloneReceipt(enrichment.receipt);
     }
-    if (enrichment.receiptLogEffectsProcessed !== undefined) {
-      tx.receiptLogEffectsProcessed = enrichment.receiptLogEffectsProcessed;
+    if (enrichment.completeness.kind === 'unknown') {
+      delete tx.receiptLogEffectsProcessed;
+      delete tx.receiptLogEffectsIncompleteContracts;
+    } else {
+      tx.receiptLogEffectsProcessed = true;
+      if (enrichment.completeness.kind === 'incomplete') {
+        tx.receiptLogEffectsIncompleteContracts = [...enrichment.completeness.contracts];
+      } else {
+        delete tx.receiptLogEffectsIncompleteContracts;
+      }
     }
+  }
+
+  private snapshotCompleteness(tx: MongoBound<IEVMTransaction>): CachedReceiptCompleteness {
+    if (!tx.receiptLogEffectsProcessed) {
+      return { kind: 'unknown' };
+    }
+    const contracts = [...new Set((tx.receiptLogEffectsIncompleteContracts || []).map(contract => contract.toLowerCase()))].sort();
+    return contracts.length ? { kind: 'incomplete', contracts } : { kind: 'complete' };
   }
 
   private rememberEnrichment(txid: string, enrichment: ReceiptEnrichment) {

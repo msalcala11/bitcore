@@ -3846,13 +3846,67 @@ export class WalletService implements IWalletService {
     const indexedSend = _.keyBy(txs.filter(tx => tx.category === 'send'), 'txid');
     const seenSend = {};
     const seenReceive = {};
+    const seenSendEventIds = new Map<string, Set<string>>();
+    const seenReceiveEventIds = new Map<string, Set<string>>();
 
-    const moves: { [txid: string]: ITxProposal } = {};
+    type ExactHistoryAmount = {
+      value: bigint;
+      preserveString: boolean;
+    };
+    const exactAmount = (value: number | string | bigint | undefined | null): ExactHistoryAmount => {
+      const preserveString = typeof value === 'string' || typeof value === 'bigint';
+      try {
+        const parsed = BigInt(value ?? 0);
+        return { value: parsed < 0n ? -parsed : parsed, preserveString };
+      } catch {
+        const parsed = Number(value);
+        if (!Number.isFinite(parsed)) {
+          return { value: 0n, preserveString };
+        }
+        const integer = Math.trunc(parsed);
+        return {
+          value: BigInt(integer < 0 ? -integer : integer),
+          preserveString: preserveString || !Number.isSafeInteger(integer)
+        };
+      }
+    };
+    const addExactAmounts = (left: ExactHistoryAmount, right: ExactHistoryAmount): ExactHistoryAmount => ({
+      value: left.value + right.value,
+      preserveString: left.preserveString || right.preserveString
+    });
+    const serializeExactAmount = ({ value, preserveString }: ExactHistoryAmount): number | string => {
+      return preserveString || value > BigInt(Number.MAX_SAFE_INTEGER) ? value.toString() : Number(value);
+    };
+    const sumOutputAmounts = outputs => {
+      const total = outputs.reduce(
+        (sum, output) => addExactAmounts(sum, exactAmount(output.amount)),
+        { value: 0n, preserveString: false }
+      );
+      return serializeExactAmount(total);
+    };
+    const rememberEventId = (seen: Map<string, Set<string>>, tx): boolean => {
+      if (tx.eventId === undefined || tx.eventId === null || tx.eventId === '') {
+        return true;
+      }
+      let eventIds = seen.get(tx.txid);
+      if (!eventIds) {
+        eventIds = new Set();
+        seen.set(tx.txid, eventIds);
+      }
+      const eventId = String(tx.eventId);
+      if (eventIds.has(eventId)) {
+        return false;
+      }
+      eventIds.add(eventId);
+      return true;
+    };
+
+    const moves: { [txid: string]: any } = {};
     const moveAggregations = new Map<string, {
       rawRowCount: number;
-      knownAmount: number;
+      knownAmount: ExactHistoryAmount;
       knownIdentityKeys: Set<string>;
-      firstIdentitylessAmount?: number;
+      firstIdentitylessAmount?: ExactHistoryAmount;
     }>();
     const effectKey = effect => [
       effect.type,
@@ -3866,8 +3920,19 @@ export class WalletService implements IWalletService {
       if (source.effects?.length) {
         target.effects = _.uniqBy((target.effects || []).concat(source.effects), effectKey);
       }
+      if (source.tokenHistoryIncomplete) {
+        target.tokenHistoryIncomplete = true;
+      }
     };
     const moveIdentityKey = tx => {
+      if (tx.eventId !== undefined && tx.eventId !== null && tx.eventId !== '') {
+        return `event:${tx.eventId}`;
+      }
+      // Provider rows may carry cloned receipt effects for metadata. Those effects did
+      // not identify the provider event and must stay inert for deduplication.
+      if (tx.tokenHistorySource === 'provider') {
+        return undefined;
+      }
       const hasCallStack = tx.callStack !== undefined && tx.callStack !== null && tx.callStack !== '';
       if (hasCallStack) {
         return `call:${tx.callStack}`;
@@ -3876,13 +3941,13 @@ export class WalletService implements IWalletService {
       return effectKeys.length ? `effects:${JSON.stringify(effectKeys)}` : undefined;
     };
     const aggregateMove = tx => {
-      const amount = Math.abs(tx.satoshis);
+      const amount = exactAmount(tx.satoshis);
       const identityKey = moveIdentityKey(tx);
       let aggregation = moveAggregations.get(tx.txid);
       if (!aggregation) {
         aggregation = {
           rawRowCount: 0,
-          knownAmount: 0,
+          knownAmount: { value: 0n, preserveString: false },
           knownIdentityKeys: new Set()
         };
         moveAggregations.set(tx.txid, aggregation);
@@ -3901,7 +3966,7 @@ export class WalletService implements IWalletService {
         return false;
       }
       aggregation.knownIdentityKeys.add(identityKey);
-      aggregation.knownAmount += amount;
+      aggregation.knownAmount = addExactAmounts(aggregation.knownAmount, amount);
       return true;
     };
     // remove 'fees' and 'moves' (probably change addresses)
@@ -3914,13 +3979,18 @@ export class WalletService implements IWalletService {
       if (tx.category == 'receive') {
         if (tx.satoshis < dustThreshold) return false;
 
+        const includeOutput = rememberEventId(seenReceiveEventIds, tx);
         const output = {
           address: tx.address,
-          amount: Math.abs(tx.satoshis)
+          amount: serializeExactAmount(exactAmount(tx.satoshis))
         };
         if (seenReceive[tx.txid]) {
-          seenReceive[tx.txid].outputs.push(output);
-          mergeEffects(seenReceive[tx.txid], tx);
+          if (includeOutput) {
+            seenReceive[tx.txid].outputs.push(output);
+            mergeEffects(seenReceive[tx.txid], tx);
+          } else if (tx.tokenHistoryIncomplete) {
+            seenReceive[tx.txid].tokenHistoryIncomplete = true;
+          }
           return false;
         } else {
           tx.outputs = [output];
@@ -3929,13 +3999,18 @@ export class WalletService implements IWalletService {
         }
       }
       if (tx.category == 'send') {
+        const includeOutput = rememberEventId(seenSendEventIds, tx);
         const output = {
           address: tx.address,
-          amount: Math.abs(tx.satoshis)
+          amount: serializeExactAmount(exactAmount(tx.satoshis))
         };
         if (seenSend[tx.txid]) {
-          seenSend[tx.txid].outputs.push(output);
-          mergeEffects(seenSend[tx.txid], tx);
+          if (includeOutput) {
+            seenSend[tx.txid].outputs.push(output);
+            mergeEffects(seenSend[tx.txid], tx);
+          } else if (tx.tokenHistoryIncomplete) {
+            seenSend[tx.txid].tokenHistoryIncomplete = true;
+          }
           return false;
         } else {
           tx.outputs = [output];
@@ -3949,13 +4024,15 @@ export class WalletService implements IWalletService {
         const includeOutput = aggregateMove(tx);
         const output = {
           address: tx.address,
-          amount: Math.abs(tx.satoshis)
+          amount: serializeExactAmount(exactAmount(tx.satoshis))
         };
 
         if (moves[tx.txid]) {
           if (includeOutput) {
             moves[tx.txid].outputs.push(output);
             mergeEffects(moves[tx.txid], tx);
+          } else if (tx.tokenHistoryIncomplete) {
+            moves[tx.txid].tokenHistoryIncomplete = true;
           }
           return false;
         } else {
@@ -4012,7 +4089,7 @@ export class WalletService implements IWalletService {
           return undefined;
         }
 
-        const ret = {
+        const ret: any = {
           id: tx.id,
           txid: tx.txid,
           confirmations: c,
@@ -4038,29 +4115,35 @@ export class WalletService implements IWalletService {
           gasLimit: tx.gasLimit,
           receipt: tx.receipt ? { ...tx.receipt, logs: undefined } : undefined,
           nonce: tx.nonce,
-          effects: tx.effects
+          effects: tx.effects,
+          tokenHistoryIncomplete: tx.tokenHistoryIncomplete || undefined
         };
         switch (tx.category) {
           case 'send':
             ret.action = 'sent';
-            ret.amount = Math.abs(tx.outputs.reduce((sum, o) => sum += o.amount, 0)) || Math.abs(tx.satoshis);
+            ret.amount = tx.outputs?.length
+              ? sumOutputAmounts(tx.outputs)
+              : serializeExactAmount(exactAmount(tx.satoshis));
             ret.addressTo = tx.outputs ? tx.outputs[0].address : null;
             ret.outputs = tx.outputs;
             break;
           case 'receive':
             ret.action = 'received';
             ret.outputs = tx.outputs;
-            ret.amount = Math.abs(tx.outputs.reduce((sum, o) => sum += o.amount, 0)) || Math.abs(tx.satoshis);
-            ret.dust = ret.amount < dustThreshold;
+            ret.amount = tx.outputs?.length
+              ? sumOutputAmounts(tx.outputs)
+              : serializeExactAmount(exactAmount(tx.satoshis));
+            ret.dust = exactAmount(ret.amount).value < exactAmount(dustThreshold).value;
             break;
           case 'move':
             ret.action = 'moved';
             const moveAggregation = moveAggregations.get(tx.txid);
-            // Known effects are authoritative when present. Mixed identity-less outputs
-            // remain visible, but cannot safely contribute an amount without an identity.
+            // Known event/effect identities are authoritative when present. Mixed
+            // identity-less outputs remain visible, but cannot safely contribute an
+            // amount without an identity.
             ret.amount = moveAggregation && moveAggregation.knownIdentityKeys.size > 0
-              ? moveAggregation.knownAmount
-              : moveAggregation?.firstIdentitylessAmount ?? Math.abs(tx.satoshis);
+              ? serializeExactAmount(moveAggregation.knownAmount)
+              : serializeExactAmount(moveAggregation?.firstIdentitylessAmount ?? exactAmount(tx.satoshis));
             ret.addressTo = tx.outputs && tx.outputs.length ? tx.outputs[0].address : null;
             ret.outputs = tx.outputs;
             break;

@@ -5,7 +5,7 @@ import { Config } from '../../../../services/config';
 import { Storage } from '../../../../services/storage';
 import { wait } from '../../../../utils';
 import { EVMBlockStorage } from '../models/block';
-import { EVMTransactionStorage } from '../models/transaction';
+import { EVMTransactionStorage, type ReceiptEffectOutcome } from '../models/transaction';
 import { addReceiptsToTxs, getReceiptFetchConcurrency } from './receipts';
 import { type IRpc, Rpcs } from './rpcs';
 import type { IEVMBlock, IEVMTransactionInProcess } from '../types';
@@ -69,8 +69,8 @@ export class SyncWorker {
         return;
       }
 
-      const { convertedBlock, convertedTxs } = await this.convertBlock(block);
-      await this.processBlock(convertedBlock, convertedTxs);
+      const { convertedBlock, convertedTxs, failedReceiptTxids, receiptEffectOutcomes } = await this.convertBlock(block);
+      await this.processBlock(convertedBlock, convertedTxs, { failedReceiptTxids, receiptEffectOutcomes });
 
       worker.parentPort!.postMessage({
         message: 'sync',
@@ -117,7 +117,14 @@ export class SyncWorker {
     return { web3: this.web3, rpc: this.rpc };
   }
 
-  async processBlock(block: IEVMBlock, transactions: IEVMTransactionInProcess[]): Promise<any> {
+  async processBlock(
+    block: IEVMBlock,
+    transactions: IEVMTransactionInProcess[],
+    receiptMetadata: {
+      failedReceiptTxids?: Set<string>;
+      receiptEffectOutcomes?: Map<string, ReceiptEffectOutcome>;
+    } = {}
+  ): Promise<any> {
     await EVMBlockStorage.addBlock({
       chain: this.chain,
       network: this.network,
@@ -125,7 +132,8 @@ export class SyncWorker {
       parentChain: this.chainConfig.parentChain,
       initialSyncComplete: false,
       block,
-      transactions
+      transactions,
+      ...receiptMetadata
     });
   }
 
@@ -168,13 +176,13 @@ export class SyncWorker {
     const convertedTxs = block.transactions.map(t => this.txModel.convertRawTx(this.chain, this.network, t, convertedBlock));
     const traceTxs = await this.rpc!.getTransactionsFromBlock(convertedBlock.height);
     this.rpc!.reconcileTraces(convertedBlock, convertedTxs, traceTxs);
-    await this.addReceiptsToTxs(convertedTxs);
-    this.txModel.addEffectsToTxs(convertedTxs);
-    return { convertedBlock, convertedTxs };
+    const failedReceiptTxids = await this.addReceiptsToTxs(convertedTxs);
+    const receiptEffectOutcomes = this.txModel.addEffectsToTxs(convertedTxs);
+    return { convertedBlock, convertedTxs, failedReceiptTxids, receiptEffectOutcomes };
   }
 
   async addReceiptsToTxs(txs: IEVMTransactionInProcess[]) {
-    await addReceiptsToTxs(this.web3!, txs, {
+    return addReceiptsToTxs(this.web3!, txs, {
       concurrency: getReceiptFetchConcurrency(this.chainConfig.receiptFetchConcurrency, this.receiptFetchWorkerCount),
       retries: this.chainConfig.receiptFetchRetries,
       retryDelayMs: this.chainConfig.receiptFetchRetryDelayMs

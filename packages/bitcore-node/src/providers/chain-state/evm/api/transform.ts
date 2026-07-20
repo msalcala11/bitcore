@@ -48,6 +48,9 @@ export class EVMListTransactionsStream extends TransformWithEventPipe {
       return done();
     }
 
+    const isProviderTokenRow = !!this.tokenAddress && transaction.tokenHistoryMode === 'raw';
+    const requestedTokenIncomplete = !!this.tokenAddressLower &&
+      !!transaction.receiptLogEffectsIncompleteContracts?.some(contract => contract.toLowerCase() === this.tokenAddressLower);
     const baseTx = {
       id: transaction._id,
       txid: transaction.txid,
@@ -65,7 +68,10 @@ export class EVMListTransactionsStream extends TransformWithEventPipe {
       chain: transaction.chain,
       nonce: transaction.nonce,
       effects: transaction.effects,
-      callStack: transaction.callStack
+      callStack: transaction.callStack,
+      eventId: transaction.eventId,
+      ...(this.tokenAddress ? { tokenHistorySource: isProviderTokenRow ? 'provider' : 'derived' } : {}),
+      ...((transaction.tokenHistoryIncomplete || requestedTokenIncomplete) ? { tokenHistoryIncomplete: true } : {})
     } as any;
 
     // Add old properties if leanTxStorage is not enabled
@@ -84,12 +90,15 @@ export class EVMListTransactionsStream extends TransformWithEventPipe {
       baseTx.abiType = { type: 'ERC20', name: 'transfer', params: [] };
     }
 
-    const matchingReceiveEffects = (transaction.effects || []).filter(effect =>
+    // In raw/provider mode effects are retained as metadata only. Using cloned receipt
+    // effects for arithmetic would apply the same tx-wide amount to every provider row.
+    const arithmeticEffects = isProviderTokenRow ? [] : (transaction.effects || []);
+    const matchingReceiveEffects = arithmeticEffects.filter(effect =>
       this.isWalletAddress(effect.to) &&
       this.matchesTokenAddress(effect.contractAddress) &&
       !this.isWalletMoveEffect(effect)
     );
-    const matchingSendEffects = (transaction.effects || []).filter(effect =>
+    const matchingSendEffects = arithmeticEffects.filter(effect =>
       this.isWalletAddress(effect.from) &&
       this.matchesTokenAddress(effect.contractAddress) &&
       !this.isWalletMoveEffect(effect)
@@ -133,7 +142,7 @@ export class EVMListTransactionsStream extends TransformWithEventPipe {
         // self-call). Transfers between two DIFFERENT addresses of one query's address
         // set intentionally emit nothing: EVM wallets are queried per address, so each
         // leg is served by its own query.
-        const selfTransferEffects = !this.tokenAddress ? [] : (transaction.effects || []).filter(effect =>
+        const selfTransferEffects = !this.tokenAddress ? [] : arithmeticEffects.filter(effect =>
           this.isWalletAddress(effect.to) &&
           effect.from?.toLowerCase() === effect.to?.toLowerCase() &&
           this.matchesTokenAddress(effect.contractAddress)
@@ -220,6 +229,7 @@ export class TokenHistoryExpansionTransform extends TransformWithEventPipe {
       }
       // Defensive only — the shared gate guarantees expand-marked rows have effects.
       // Serving the provider row beats silently emitting nothing.
+      (transaction as any).tokenHistoryMode = 'raw';
     }
     this.push(transaction);
     return done();

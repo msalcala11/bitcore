@@ -19,7 +19,7 @@ import { MultisigAbi } from '../abi/multisig';
 import type { IEVMNetworkConfig } from '../../../../types/Config';
 import type { StreamingFindOptions } from '../../../../types/Query';
 import type { TransformOptions } from '../../../../types/TransformOptions';
-import type { EVMTransactionJSON, Effect, IAbiDecodeResponse, IAbiDecodedData, IEVMBlock, IEVMCachedAddress, IEVMTransaction, IEVMTransactionInProcess, ParsedAbiParams } from '../types';
+import type { EVMTransactionJSON, Effect, IAbiDecodeResponse, IAbiDecodedData, IEVMBlock, IEVMCachedAddress, IEVMTransaction, IEVMTransactionInProcess, IEVMTransactionTransformed, ParsedAbiParams } from '../types';
 import type { Web3Types } from '@bitpay-labs/crypto-wallet-core';
 
 
@@ -35,6 +35,19 @@ function getErc20Decoder() {
   return Erc20Decoder;
 }
 const ERC20_TRANSFER_TOPIC = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef';
+
+export type ReceiptLogCompleteness =
+  | { kind: 'complete' }
+  | { kind: 'incomplete'; contracts: string[] };
+
+export type ReceiptEffectOutcome =
+  | { kind: 'derived'; completeness: ReceiptLogCompleteness }
+  | { kind: 'not-derived'; reason: 'missing-logs' | 'effect-derivation-failed' };
+
+type ReceiptEffectResult = {
+  effects: Effect[];
+  outcome: ReceiptEffectOutcome;
+};
 
 const Erc721Decoder = requireUncached('abi-decoder');
 Erc721Decoder.addABI(ERC721Abi);
@@ -117,6 +130,8 @@ export class EVMTransactionModel extends BaseTransaction<IEVMTransaction> {
 
   async batchImport(params: {
     txs: Array<IEVMTransactionInProcess>;
+    failedReceiptTxids?: Set<string>;
+    receiptEffectOutcomes?: Map<string, ReceiptEffectOutcome>;
     height: number;
     mempoolTime?: Date;
     blockTime?: Date;
@@ -130,7 +145,7 @@ export class EVMTransactionModel extends BaseTransaction<IEVMTransaction> {
   }) {
     const operations = [] as Array<Promise<any>>;
     operations.push(this.pruneMempool({ ...params }));
-    const txOps = await this.addTransactions({ ...params });
+    const txOps: any[] = await this.addTransactions({ ...params });
     logger.debug('Writing Transactions: %o', txOps.length);
     operations.push(
       ...partition(txOps, txOps.length / Config.get().maxPoolSize).map(txBatch =>
@@ -267,6 +282,8 @@ export class EVMTransactionModel extends BaseTransaction<IEVMTransaction> {
 
   async addTransactions(params: {
     txs: Array<IEVMTransactionInProcess>;
+    failedReceiptTxids?: Set<string>;
+    receiptEffectOutcomes?: Map<string, ReceiptEffectOutcome>;
     height: number;
     blockTime?: Date;
     blockHash?: string;
@@ -309,16 +326,20 @@ export class EVMTransactionModel extends BaseTransaction<IEVMTransaction> {
           if ((Config.chainConfig({ chain, network }) as IEVMNetworkConfig).leanTransactionStorage) {
             leanTx = EVMTransactionStorage.toLeanTransaction(leanTx);
           }
+          const txid = tx.txid.toLowerCase();
+          const update = this.buildReceiptPersistenceUpdate(
+            {
+              ...leanTx,
+              blockTimeNormalized,
+              wallets
+            },
+            params.receiptEffectOutcomes?.get(txid),
+            params.failedReceiptTxids?.has(txid) === true
+          );
           return {
             updateOne: {
               filter: { txid: tx.txid, chain, network },
-              update: {
-                $set: {
-                  ...leanTx,
-                  blockTimeNormalized,
-                  wallets
-                }
-              },
+              update,
               upsert: true,
               forceServerObjectId: true
             }
@@ -432,10 +453,14 @@ export class EVMTransactionModel extends BaseTransaction<IEVMTransaction> {
   /**
    * Adds effects details object to in process txs
    */
-  addEffectsToTxs(txs: IEVMTransactionInProcess[]) {
+  addEffectsToTxs(txs: IEVMTransactionInProcess[]): Map<string, ReceiptEffectOutcome> {
+    const outcomes = new Map<string, ReceiptEffectOutcome>();
     for (const tx of txs) {
-      tx.effects = this.getEffects(tx);
+      const result = this.computeEffects(tx);
+      this.commitReceiptEffectResult(tx, result);
+      outcomes.set(tx.txid.toLowerCase(), result.outcome);
     }
+    return outcomes;
   }
 
   /**
@@ -444,13 +469,21 @@ export class EVMTransactionModel extends BaseTransaction<IEVMTransaction> {
    * @returns An array of all effects for the transaction
    */
   getEffects(tx: IEVMTransactionInProcess): Effect[] {
+    const result = this.computeEffects(tx);
+    this.commitReceiptEffectResult(tx, result);
+    return result.effects;
+  }
+
+  /**
+   * Computes effects transactionally. No receipt-derived fields on tx are changed
+   * until the complete candidate and its completeness outcome are known.
+   */
+  private computeEffects(tx: IEVMTransactionInProcess): ReceiptEffectResult {
+    const originalEffects = (tx.effects || []).map(effect => ({ ...effect }));
     const effects = [] as Effect[];
     try {
       if (this.isFailedReceipt(tx.receipt)) {
-        if (tx.receipt) {
-          tx.receiptLogEffectsProcessed = true;
-        }
-        return effects;
+        return { effects, outcome: { kind: 'derived', completeness: { kind: 'complete' } } };
       }
       if (tx.calls?.length) { // Geth trace calls[]
         for (const call of tx.calls) {
@@ -500,19 +533,25 @@ export class EVMTransactionModel extends BaseTransaction<IEVMTransaction> {
           effects.push(effect);
         }
       }
-      this.addReceiptLogEffects(tx, effects);
-      if (Array.isArray(tx.receipt?.logs)) {
-        tx.receiptLogEffectsProcessed = true;
-      }
+      return this.computeReceiptLogEffects(tx, effects);
     } catch (err) {
       logger.error('Error Getting Effects For TxId: %o ::%o', tx.txid, err);
+      return {
+        effects: originalEffects,
+        outcome: { kind: 'not-derived', reason: 'effect-derivation-failed' }
+      };
     }
-    return effects;
   }
 
-  addReceiptLogEffects(tx: IEVMTransactionInProcess, effects: Effect[]) {
-    if (!tx.receipt || !Array.isArray(tx.receipt.logs) || this.isFailedReceipt(tx.receipt)) {
-      return;
+  private computeReceiptLogEffects(tx: IEVMTransactionInProcess, baseEffects: Effect[]): ReceiptEffectResult {
+    if (this.isFailedReceipt(tx.receipt)) {
+      return { effects: [], outcome: { kind: 'derived', completeness: { kind: 'complete' } } };
+    }
+    if (!tx.receipt || !Array.isArray(tx.receipt.logs)) {
+      return {
+        effects: baseEffects.map(effect => ({ ...effect })),
+        outcome: { kind: 'not-derived', reason: 'missing-logs' }
+      };
     }
     const logEffects: Effect[] = [];
     const unparseableContracts = new Set<string>();
@@ -533,12 +572,56 @@ export class EVMTransactionModel extends BaseTransaction<IEVMTransaction> {
     const transferKey = (effect: Effect) =>
       `${effect.contractAddress?.toLowerCase()}|${effect.from?.toLowerCase()}|${effect.to?.toLowerCase()}`;
     const parsedTransferKeys = new Set(logEffects.map(transferKey));
-    const filteredEffects = effects.filter(effect => {
+    const filteredEffects = baseEffects.filter(effect => {
       return !this._isErc20TransferEffect(effect) ||
         (unparseableContracts.has(effect.contractAddress!.toLowerCase()) &&
           !parsedTransferKeys.has(transferKey(effect)));
     });
-    effects.splice(0, effects.length, ...filteredEffects, ...logEffects);
+    const contracts = [...unparseableContracts].sort();
+    return {
+      effects: [...filteredEffects, ...logEffects],
+      outcome: {
+        kind: 'derived',
+        completeness: contracts.length
+          ? { kind: 'incomplete', contracts }
+          : { kind: 'complete' }
+      }
+    };
+  }
+
+  /**
+   * Backward-compatible mutating helper used by existing callers/tests. The candidate
+   * effect array is committed only after receipt-log processing succeeds.
+   */
+  addReceiptLogEffects(tx: IEVMTransactionInProcess, effects: Effect[]): ReceiptEffectOutcome {
+    let result: ReceiptEffectResult;
+    try {
+      result = this.computeReceiptLogEffects(tx, effects);
+    } catch (err) {
+      logger.error('Error Getting Receipt Effects For TxId: %o ::%o', tx.txid, err);
+      result = {
+        effects: effects.map(effect => ({ ...effect })),
+        outcome: { kind: 'not-derived', reason: 'effect-derivation-failed' }
+      };
+    }
+    this.commitReceiptEffectResult(tx, result);
+    effects.splice(0, effects.length, ...result.effects);
+    return result.outcome;
+  }
+
+  private commitReceiptEffectResult(tx: IEVMTransactionInProcess, result: ReceiptEffectResult) {
+    tx.effects = result.effects.map(effect => ({ ...effect }));
+    if (result.outcome.kind === 'derived') {
+      tx.receiptLogEffectsProcessed = true;
+      if (result.outcome.completeness.kind === 'incomplete') {
+        tx.receiptLogEffectsIncompleteContracts = [...result.outcome.completeness.contracts];
+      } else {
+        delete tx.receiptLogEffectsIncompleteContracts;
+      }
+    } else {
+      delete tx.receiptLogEffectsProcessed;
+      delete tx.receiptLogEffectsIncompleteContracts;
+    }
   }
 
   _isErc20TransferEffect(effect: Effect) {
@@ -546,37 +629,82 @@ export class EVMTransactionModel extends BaseTransaction<IEVMTransaction> {
   }
 
   /**
-   * Derives effects for a tx whose receipt (with logs) is in hand, strips the logs, and
-   * returns the fields to persist. receiptLogEffectsProcessed is only included when
-   * derivation actually completed against a logs array (or the receipt failed), so
-   * partially-derived txs stay eligible for the backfill's repair query.
-   * @param tx A tx with a receipt attached; mutated in place
-   * @returns The update fields to $set
+   * Compatibility wrapper for callers that only consume fields to set. Persistence
+   * paths must use deriveReceiptLogEffectsUpdate() so stale fields can be unset too.
    */
   deriveReceiptLogEffects(tx: IEVMTransactionInProcess): Partial<IEVMTransaction> {
-    const update: Partial<IEVMTransaction> = {};
-    if (this.isFailedReceipt(tx.receipt)) {
-      tx.effects = [];
-      tx.receiptLogEffectsProcessed = true;
-    } else if (tx.effects?.length) {
-      const effects = [...tx.effects];
-      this.addReceiptLogEffects(tx, effects);
-      tx.effects = effects;
-      if (Array.isArray(tx.receipt?.logs)) {
-        tx.receiptLogEffectsProcessed = true;
+    return this.deriveReceiptLogEffectsUpdate(tx).update.$set;
+  }
+
+  deriveReceiptLogEffectsUpdate(
+    tx: IEVMTransactionInProcess,
+    additionalSet: Partial<IEVMTransaction> = {}
+  ): { outcome: ReceiptEffectOutcome; update: any } {
+    let result: ReceiptEffectResult;
+    if (tx.effects?.length) {
+      const originalEffects = tx.effects.map(effect => ({ ...effect }));
+      try {
+        result = this.computeReceiptLogEffects(tx, originalEffects);
+      } catch (err) {
+        logger.error('Error Deriving Receipt Effects For TxId: %o ::%o', tx.txid, err);
+        result = {
+          effects: originalEffects,
+          outcome: { kind: 'not-derived', reason: 'effect-derivation-failed' }
+        };
       }
     } else {
-      // getEffects sets receiptLogEffectsProcessed itself only when derivation completes
-      tx.effects = this.getEffects(tx);
+      result = this.computeEffects(tx);
     }
-    update.effects = tx.effects;
-    if (tx.receiptLogEffectsProcessed) {
-      update.receiptLogEffectsProcessed = true;
-    }
+    this.commitReceiptEffectResult(tx, result);
     // logs can be very large and are not currently needed for any use case in this codebase.
     this.stripReceiptLogs(tx);
-    update.receipt = tx.receipt;
-    return update;
+    const setFields: Partial<IEVMTransaction> = {
+      effects: tx.effects,
+      receipt: tx.receipt,
+      ...additionalSet
+    };
+    return {
+      outcome: result.outcome,
+      update: this.buildReceiptPersistenceUpdate(setFields, result.outcome)
+    };
+  }
+
+  /**
+   * Builds one conflict-free Mongo update for receipt state. Callers supply their
+   * normal $set payload; this method owns every processed/completeness transition.
+   */
+  buildReceiptPersistenceUpdate(
+    setFields: Record<string, any>,
+    outcome?: ReceiptEffectOutcome,
+    receiptFetchFailed = false
+  ) {
+    const $set = { ...setFields };
+    const $unset = {} as Record<string, ''>;
+    const unset = (field: string) => {
+      delete $set[field];
+      $unset[field] = '';
+    };
+
+    if (receiptFetchFailed) {
+      unset('receipt');
+      unset('receiptLogEffectsProcessed');
+      unset('receiptLogEffectsIncompleteContracts');
+    } else if (outcome?.kind === 'derived') {
+      $set.receiptLogEffectsProcessed = true;
+      if (outcome.completeness.kind === 'incomplete') {
+        $set.receiptLogEffectsIncompleteContracts = [...outcome.completeness.contracts];
+      } else {
+        unset('receiptLogEffectsIncompleteContracts');
+      }
+    } else if (outcome?.kind === 'not-derived') {
+      unset('receiptLogEffectsProcessed');
+      unset('receiptLogEffectsIncompleteContracts');
+    }
+
+    return {
+      $set,
+      ...(Object.keys($unset).length ? { $unset } : {})
+    };
   }
 
   isFailedReceipt(receipt?: { status?: boolean | number | string | bigint }) {
@@ -787,7 +915,7 @@ export class EVMTransactionModel extends BaseTransaction<IEVMTransaction> {
   // Incorrect: tx.data.toString('hex') => 307861393035396362623030303030303030303030303030303030303030303030303031353033646663356164383162663633306438333639376539383630313837316262323131623630303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303032373130
 
   _apiTransform(
-    tx: IEVMTransactionInProcess | Partial<MongoBound<IEVMTransactionInProcess>>,
+    tx: IEVMTransactionInProcess | IEVMTransactionTransformed | Partial<MongoBound<IEVMTransactionTransformed>>,
     options?: TransformOptions
   ): EVMTransactionJSON | string {
 
@@ -808,6 +936,15 @@ export class EVMTransactionModel extends BaseTransaction<IEVMTransaction> {
       from: tx.from || '',
       effects: tx.effects || []
     };
+    if ('eventId' in tx && tx.eventId) {
+      transaction.eventId = tx.eventId;
+    }
+    if ('tokenHistorySource' in tx && tx.tokenHistorySource) {
+      transaction.tokenHistorySource = tx.tokenHistorySource;
+    }
+    if ('tokenHistoryIncomplete' in tx && tx.tokenHistoryIncomplete) {
+      transaction.tokenHistoryIncomplete = true;
+    }
 
     // Add non-lean properties if we aren't excluding them
     const config = Config.chainConfig({ chain: tx.chain as string, network: tx.network as string }) as IEVMNetworkConfig;

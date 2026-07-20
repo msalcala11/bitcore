@@ -701,7 +701,9 @@ describe('BaseEVMStateProvider: populateReceipt', function() {
       gasLimit: 1500000,
       nonce: 79903,
       transactionIndex: 0,
-      effects: []
+      effects: [],
+      receiptLogEffectsProcessed: true,
+      receiptLogEffectsIncompleteContracts: [busdToken.toLowerCase()]
     } as any;
 
     await provider.populateReceipt(tx);
@@ -710,12 +712,14 @@ describe('BaseEVMStateProvider: populateReceipt', function() {
     expect(tx.fee).to.equal(2050);
     expect(tx.effects).to.deep.equal([expectedEffect]);
     expect(tx.receipt.logs).to.equal(undefined);
+    expect(tx.receiptLogEffectsIncompleteContracts).to.equal(undefined);
     expect(updateOne.firstCall.args[1].$set).to.deep.equal({
       receipt: tx.receipt,
       fee: 2050,
       effects: [expectedEffect],
       receiptLogEffectsProcessed: true
     });
+    expect(updateOne.firstCall.args[1].$unset).to.deep.equal({ receiptLogEffectsIncompleteContracts: '' });
   });
 
   it('tags wallets matched by newly derived effects', async function() {
@@ -738,7 +742,9 @@ describe('BaseEVMStateProvider: populateReceipt', function() {
       nonce: 79903,
       transactionIndex: 0,
       wallets: [],
-      effects: []
+      effects: [],
+      receiptLogEffectsProcessed: true,
+      receiptLogEffectsIncompleteContracts: [busdToken.toLowerCase()]
     } as any;
 
     await provider.populateReceipt(tx);
@@ -746,8 +752,11 @@ describe('BaseEVMStateProvider: populateReceipt', function() {
     // The transfer-log effect touches walletAddress, whose wallet was never tagged at
     // sync time; the repair must retag or the history query can't surface this tx.
     expect(tx.wallets).to.deep.equal([walletId]);
+    expect(tx.receiptLogEffectsProcessed).to.equal(true);
+    expect(tx.receiptLogEffectsIncompleteContracts).to.equal(undefined);
     expect(updateOne.firstCall.args[1].$addToSet).to.deep.equal({ wallets: { $each: [walletId] } });
     expect(updateOne.firstCall.args[1].$set.effects).to.deep.equal([expectedTransferEffect()]);
+    expect(updateOne.firstCall.args[1].$unset).to.deep.equal({ receiptLogEffectsIncompleteContracts: '' });
   });
 
   it('does not retag wallets that are already tagged', async function() {
@@ -817,7 +826,6 @@ describe('BaseEVMStateProvider: populateReceipt', function() {
       amount: '1',
       callStack: '0'
     };
-    sandbox.stub(EVMTransactionStorage, 'getEffects').returns([partialEffect]);
     const tx = {
       _id: new ObjectId(),
       txid,
@@ -830,7 +838,9 @@ describe('BaseEVMStateProvider: populateReceipt', function() {
       gasLimit: 1500000,
       nonce: 79903,
       transactionIndex: 0,
-      effects: []
+      effects: [partialEffect],
+      receiptLogEffectsProcessed: true,
+      receiptLogEffectsIncompleteContracts: [busdToken.toLowerCase()]
     } as any;
 
     await provider.populateReceipt(tx);
@@ -841,6 +851,10 @@ describe('BaseEVMStateProvider: populateReceipt', function() {
       receipt: tx.receipt,
       fee: 2000,
       effects: [partialEffect]
+    });
+    expect(updateOne.firstCall.args[1].$unset).to.deep.equal({
+      receiptLogEffectsProcessed: '',
+      receiptLogEffectsIncompleteContracts: ''
     });
   });
 
@@ -1205,7 +1219,12 @@ describe('PopulateReceiptTransform (native mode)', function() {
     });
 
     stream.write({ txid: duplicateTxid, value: '100', effects: [] } as any);
-    stream.write({ txid: duplicateTxid, value: '200', effects: [] } as any);
+    stream.write({
+      txid: duplicateTxid,
+      value: '200',
+      effects: [],
+      receiptLogEffectsIncompleteContracts: ['0xstale']
+    } as any);
     stream.end();
     await done;
 
@@ -1215,6 +1234,7 @@ describe('PopulateReceiptTransform (native mode)', function() {
     expect(rows[0].effects).to.not.equal(rows[1].effects);
     expect(rows[0].receipt).to.not.equal(rows[1].receipt);
     expect(rows.map(row => row.receiptLogEffectsProcessed)).to.deep.equal([true, true]);
+    expect(rows.map(row => row.receiptLogEffectsIncompleteContracts)).to.deep.equal([undefined, undefined]);
   });
 });
 

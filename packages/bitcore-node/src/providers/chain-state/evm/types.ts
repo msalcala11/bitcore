@@ -162,6 +162,12 @@ export type IEVMTransaction = ITransaction & {
   receipt?: TxReceipt;
   effects?: Effect[]; // Meant to replace abiType, internal, calls and data on stored txs
   receiptLogEffectsProcessed?: boolean;
+  /**
+   * Lowercase token contracts for which a Transfer log was recognized but could not
+   * be decoded canonically. Processing completed, but token effects for these
+   * contracts are not authoritative.
+   */
+  receiptLogEffectsIncompleteContracts?: string[];
   confirmations?: number;
 };
 
@@ -200,8 +206,12 @@ export interface TxReceipt {
 export type IEVMTransactionTransformed = IEVMTransactionInProcess & {
   initialFrom?: string;
   callStack?: string;
+  /** Stable identity for one provider/log event within a transaction. */
+  eventId?: string;
   externalCategory?: string; // from external provider
   tokenHistoryMode?: 'expand' | 'raw' | 'drop'; // per-request serve mode, see PopulateReceiptTransform
+  tokenHistoryIncomplete?: boolean;
+  tokenHistorySource?: 'provider' | 'derived';
 };
 
 export interface TransactionJSON {
@@ -254,6 +264,11 @@ export interface EVMTransactionJSON {
   calls?: Array<IGethTxTraceFlat>;
   receipt?: TxReceipt;
   effects?: Effect[];
+  eventId?: string;
+  /** Internal provenance used by downstream wallet-history normalization. */
+  tokenHistorySource?: 'provider' | 'derived';
+  /** Public warning that known rows for the requested token may omit transfer legs. */
+  tokenHistoryIncomplete?: boolean;
 }
 
 export interface EventLog<T> {

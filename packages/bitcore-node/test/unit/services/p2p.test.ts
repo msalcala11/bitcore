@@ -226,6 +226,8 @@ describe('P2P Service', function() {
       { txid: '0x0', blockHash: '0xblock0', blockHeight: 1, gasPrice: 50 },
       { txid: '0x1', blockHash: '0xblock1', blockHeight: 2, gasPrice: 50 }
     ] as any[];
+    txs[0].receiptLogEffectsProcessed = true;
+    txs[0].receiptLogEffectsIncompleteContracts = ['0xtoken'];
     const request = sandbox.stub().rejects({ code: -32601, message: 'method not found' });
     const web3 = {
       currentProvider: { request },
@@ -471,10 +473,13 @@ describe('P2P Service', function() {
 
     // Block processing must not stall over one receipt: the tx is left without one
     // (receiptLogEffectsProcessed unset) and repaired later by backfill or on read.
-    await addReceiptsToTxs(web3 as any, txs, { concurrency: 1, retries: 1, retryDelayMs: 0 });
+    const failedTxids = await addReceiptsToTxs(web3 as any, txs, { concurrency: 1, retries: 1, retryDelayMs: 0 });
 
     expect(txs[0].receipt).to.equal(undefined);
+    expect(txs[0].receiptLogEffectsProcessed).to.equal(undefined);
+    expect(txs[0].receiptLogEffectsIncompleteContracts).to.equal(undefined);
     expect(txs[1].receipt.transactionHash).to.equal('0xpresent');
+    expect([...failedTxids]).to.deep.equal(['0xmissing']);
     // The missing receipt was still retried before being given up on.
     expect(web3.eth.getTransactionReceipt.callCount).to.equal(3);
   });

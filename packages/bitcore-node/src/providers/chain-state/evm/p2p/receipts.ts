@@ -20,9 +20,10 @@ export async function addReceiptsToTxs(
   web3: Web3,
   txs: IEVMTransactionInProcess[],
   opts: { concurrency?: number; retries?: number; retryDelayMs?: number } = {}
-) {
+): Promise<Set<string>> {
+  const failedTxids = new Set<string>();
   if (!txs.length) {
-    return;
+    return failedTxids;
   }
 
   // Use whatever the batch call returned and fetch only the misses individually.
@@ -37,7 +38,7 @@ export async function addReceiptsToTxs(
     }
   }
   if (!missingTxs.length) {
-    return;
+    return failedTxids;
   }
 
   const concurrency = getReceiptFetchConcurrency(opts.concurrency);
@@ -54,6 +55,13 @@ export async function addReceiptsToTxs(
         });
         setReceiptAndFee(tx, receipt);
       } catch (err: any) {
+        failedTxids.add(tx.txid.toLowerCase());
+        // The transaction may be a reused object during resync/tests. Keep the live
+        // state consistent with the persistence update that will clear stale repair
+        // metadata for this fetch failure.
+        delete tx.receipt;
+        delete tx.receiptLogEffectsProcessed;
+        delete tx.receiptLogEffectsIncompleteContracts;
         // Never fail block processing over a receipt: the tx is stored without
         // receipt-log effects (receiptLogEffectsProcessed stays unset), so it is
         // repaired later by scripts/backfillEvmReceiptLogEffects.js or on read.
@@ -63,6 +71,7 @@ export async function addReceiptsToTxs(
   });
 
   await Promise.all(workers);
+  return failedTxids;
 }
 
 async function getBlockReceipts(

@@ -449,7 +449,7 @@ export class BaseEVMStateProvider extends InternalStateProvider implements IChai
   }
 
   async populateReceipt(tx: MongoBound<IEVMTransaction>, opts?: { retries: number; retryDelayMs?: number }) {
-    const update = {} as Partial<IEVMTransaction>;
+    const additionalSet = {} as Partial<IEVMTransaction>;
     if (!tx.receipt) {
       const receipt = await this.getReceipt(tx.network, tx.txid, opts);
       if (!receipt) {
@@ -459,19 +459,21 @@ export class BaseEVMStateProvider extends InternalStateProvider implements IChai
       const fee = computeReceiptFee(receipt, tx.gasPrice);
       if (fee !== undefined) {
         tx.fee = fee;
-        update.fee = fee;
+        additionalSet.fee = fee;
       }
       // Derive receipt-log effects while the logs are in hand.
-      Object.assign(update, EVMTransactionStorage.deriveReceiptLogEffects(tx as IEVMTransactionInProcess));
     } else if (Array.isArray(tx.receipt.logs)) {
       // Legacy rows persisted full receipts. Derive effects from the stored logs (no RPC
       // needed) and persist the stripped receipt so the logs stop shipping on every read.
-      Object.assign(update, EVMTransactionStorage.deriveReceiptLogEffects(tx as IEVMTransactionInProcess));
     } else {
       // Stored, already-stripped receipt: served as-is; historical rows missing receipt-log
       // effects are upgraded by scripts/backfillEvmReceiptLogEffects.js, not here.
       return tx;
     }
+    const { update } = EVMTransactionStorage.deriveReceiptLogEffectsUpdate(
+      tx as IEVMTransactionInProcess,
+      additionalSet
+    );
     if (tx._id) {
       // Late-derived effects can add addresses the sync-time tagging never saw; without a
       // retag the wallets-filtered history query can never surface the repaired tx.
@@ -480,7 +482,7 @@ export class BaseEVMStateProvider extends InternalStateProvider implements IChai
         tx.wallets = [...(tx.wallets || []), ...newWallets];
       }
       await EVMTransactionStorage.collection.updateOne({ _id: tx._id }, {
-        $set: update,
+        ...update,
         ...(newWallets.length ? { $addToSet: { wallets: { $each: newWallets } } } : {})
       });
     }

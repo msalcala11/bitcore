@@ -54,13 +54,30 @@ export function transformMoralisInternalTx(tx: any) {
 
 export function transformMoralisTokenTransfer(transfer: any) {
   const base = transformMoralisTransaction(transfer);
+  const eventId = normalizeLogEventId(transfer.log_index ?? transfer.logIndex);
   return {
     ...base,
     transactionHash: transfer.transaction_hash,
     transactionIndex: transfer.transaction_index,
     contractAddress: transfer.contract_address ?? transfer.address,
-    name: transfer.token_name
+    name: transfer.token_name,
+    ...(eventId ? { eventId } : {})
   };
+}
+
+export function normalizeLogEventId(logIndex: unknown): string | undefined {
+  if (logIndex === undefined || logIndex === null || logIndex === '') {
+    return;
+  }
+  try {
+    const normalized = BigInt(logIndex as any);
+    if (normalized < 0n) {
+      return;
+    }
+    return `log:${normalized.toString()}`;
+  } catch {
+    return;
+  }
 }
 
 export function transformMoralisQueryParams(params: { chainId: string | bigint; args: any }) {

@@ -35,7 +35,7 @@ export class EVMVerificationPeer extends EVMP2pWorker implements IVerificationPe
     while (currentHeight <= end) {
       let lastLog = Date.now();
       const block = await this.getBlock(currentHeight);
-      const { convertedBlock, convertedTxs } = await this.convertBlock(block);
+      const { convertedBlock, convertedTxs, failedReceiptTxids, receiptEffectOutcomes } = await this.convertBlock(block);
 
       const nextBlock = await EVMBlockStorage.collection.findOne({ chain, network, previousBlockHash: block.hash });
       if (nextBlock) {
@@ -49,7 +49,9 @@ export class EVMVerificationPeer extends EVMP2pWorker implements IVerificationPe
         parentChain: this.chainConfig.parentChain,
         initialSyncComplete: this.initialSyncComplete,
         block: convertedBlock,
-        transactions: convertedTxs
+        transactions: convertedTxs,
+        failedReceiptTxids,
+        receiptEffectOutcomes
       });
 
       currentHeight++;

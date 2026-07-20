@@ -1,5 +1,5 @@
 import { expect } from 'chai';
-import { computeReceiptFee, normalizeReceipt } from '../../src/providers/chain-state/evm/p2p/receipts';
+import { addReceiptsToTxs, computeReceiptFee, normalizeReceipt } from '../../src/providers/chain-state/evm/p2p/receipts';
 import { EVMTransactionStorage } from '../../src/providers/chain-state/evm/models/transaction';
 
 describe('normalizeReceipt', function() {
@@ -98,6 +98,50 @@ describe('normalizeReceipt', function() {
     expect((update.receipt as any).contractAddress).to.equal(null);
     expect((update.receipt as any).l1Fee).to.equal('0x2e94ae15c14e0');
     expect((update.receipt as any).gasUsed).to.equal(100);
+    expect(tx.receiptLogEffectsProcessed).to.equal(true);
+    expect(tx.receiptLogEffectsIncompleteContracts).to.deep.equal([
+      '0x4fabb145d64652a948d72533023f6e7a623c7c53'
+    ]);
+  });
+
+  it('distinguishes missing logs, empty logs, and failed on-chain execution', function() {
+    const fallbackEffect = { to: '0x1', from: '0x2', amount: '3', callStack: '0' };
+    const missingLogsTx: any = {
+      txid,
+      chain: 'ETH',
+      network: 'mainnet',
+      effects: [fallbackEffect],
+      receipt: { status: true },
+      receiptLogEffectsProcessed: true,
+      receiptLogEffectsIncompleteContracts: ['0xstale']
+    };
+    const emptyLogsTx: any = {
+      ...missingLogsTx,
+      effects: [fallbackEffect],
+      receipt: { status: true, logs: [] }
+    };
+    const failedExecutionTx: any = {
+      ...missingLogsTx,
+      effects: [fallbackEffect],
+      receipt: { status: false, logs: [] }
+    };
+
+    const missing = EVMTransactionStorage.deriveReceiptLogEffectsUpdate(missingLogsTx);
+    const empty = EVMTransactionStorage.deriveReceiptLogEffectsUpdate(emptyLogsTx);
+    const failed = EVMTransactionStorage.deriveReceiptLogEffectsUpdate(failedExecutionTx);
+
+    expect(missing.outcome).to.deep.equal({ kind: 'not-derived', reason: 'missing-logs' });
+    expect(missingLogsTx.effects).to.deep.equal([fallbackEffect]);
+    expect(missing.update.$unset).to.deep.equal({
+      receiptLogEffectsProcessed: '',
+      receiptLogEffectsIncompleteContracts: ''
+    });
+    expect(empty.outcome).to.deep.equal({ kind: 'derived', completeness: { kind: 'complete' } });
+    expect(emptyLogsTx.receiptLogEffectsProcessed).to.equal(true);
+    expect(emptyLogsTx.receiptLogEffectsIncompleteContracts).to.equal(undefined);
+    expect(failed.outcome).to.deep.equal({ kind: 'derived', completeness: { kind: 'complete' } });
+    expect(failedExecutionTx.effects).to.deep.equal([]);
+    expect(failedExecutionTx.receiptLogEffectsProcessed).to.equal(true);
   });
 
   it('scrubs bigint values safely', function() {
@@ -131,5 +175,31 @@ describe('computeReceiptFee', function() {
 
   it('rejects negative fee components', function() {
     expect(computeReceiptFee({ gasUsed: 10, effectiveGasPrice: 20, l1Fee: -1 })).to.equal(undefined);
+  });
+});
+
+describe('addReceiptsToTxs failure metadata', function() {
+  it('returns normalized failed txids and clears stale in-memory receipt state', async function() {
+    const tx: any = {
+      txid: '0xABC',
+      receiptLogEffectsProcessed: true,
+      receiptLogEffectsIncompleteContracts: ['0xtoken']
+    };
+    const web3: any = {
+      eth: {
+        getTransactionReceipt: async () => null
+      }
+    };
+
+    const failures = await addReceiptsToTxs(web3, [tx], {
+      concurrency: 1,
+      retries: 1,
+      retryDelayMs: 0
+    });
+
+    expect([...failures]).to.deep.equal(['0xabc']);
+    expect(tx.receipt).to.equal(undefined);
+    expect(tx.receiptLogEffectsProcessed).to.equal(undefined);
+    expect(tx.receiptLogEffectsIncompleteContracts).to.equal(undefined);
   });
 });

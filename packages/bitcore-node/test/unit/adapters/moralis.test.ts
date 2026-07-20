@@ -253,11 +253,13 @@ describe('MoralisAdapter', function () {
           ...MOCK_MORALIS_TX,
           transaction_hash: MOCK_MORALIS_TX.hash,
           contract_address: '0xtokencontract',
-          token_name: 'USDC'
+          token_name: 'USDC',
+          log_index: '0x07'
         };
         const result = transformMoralisTokenTransfer(transfer);
         expect(result.contractAddress).to.equal('0xtokencontract');
         expect(result.name).to.equal('USDC');
+        expect(result.eventId).to.equal('log:7');
       });
     });
 

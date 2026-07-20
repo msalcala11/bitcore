@@ -105,12 +105,16 @@ async function processBlockTxs(getWeb3, blockTxs) {
   }
   const readyTxs = blockTxs.filter(tx => Array.isArray(tx.receipt?.logs));
   const updates = new Map();
+  let notDerived = 0;
   for (const tx of readyTxs) {
-    // Only includes receiptLogEffectsProcessed when derivation completed, so partially
-    // derived txs stay in this script's repair query for the next run.
-    const update = EVMTransactionStorage.deriveReceiptLogEffects(tx);
-    if (tx.fee !== undefined) {
-      update.fee = tx.fee;
+    // The shared builder owns processed/completeness $set/$unset transitions, so a
+    // later complete derivation cannot retain stale incompleteness metadata.
+    const { outcome, update } = EVMTransactionStorage.deriveReceiptLogEffectsUpdate(
+      tx,
+      tx.fee !== undefined ? { fee: tx.fee } : {}
+    );
+    if (outcome.kind === 'not-derived') {
+      notDerived++;
     }
     updates.set(tx, update);
   }
@@ -121,7 +125,7 @@ async function processBlockTxs(getWeb3, blockTxs) {
     ? await EVMTransactionStorage.getNewWalletsForTxs(chain, network, readyTxs)
     : new Map();
   const ops = readyTxs.map(tx => {
-    const updateOp = { $set: updates.get(tx) };
+    const updateOp = updates.get(tx);
     const newWallets = newWalletsByTx.get(tx) || [];
     if (newWallets.length) {
       updateOp.$addToSet = { wallets: { $each: newWallets } };
@@ -143,7 +147,8 @@ async function processBlockTxs(getWeb3, blockTxs) {
   return {
     written,
     unfetchable: blockTxs.length - readyTxs.length,
-    notModified: ops.length - written
+    notModified: ops.length - written,
+    notDerived
   };
 }
 
@@ -203,7 +208,7 @@ loadRuntimeDependencies()
       }
       const blockHeight = blockTxs[0].blockHeight;
       try {
-        const { written, unfetchable, notModified } = await processBlockTxs(getWeb3, blockTxs);
+        const { written, unfetchable, notModified, notDerived } = await processBlockTxs(getWeb3, blockTxs);
         countUpdated += written;
         if (unfetchable) {
           runtimeExitState.skippedTransactions += unfetchable;
@@ -212,6 +217,10 @@ loadRuntimeDependencies()
         if (notModified) {
           runtimeExitState.unwrittenTransactions += notModified;
           console.error(`\n${notModified} tx(s) in block ${blockHeight} were not updated (write failure, or already repaired concurrently); retried on the next run only if still unflagged`);
+        }
+        if (notDerived) {
+          runtimeExitState.skippedTransactions += notDerived;
+          console.error(`\n${notDerived} tx(s) in block ${blockHeight} could not derive effects (will retry on the next backfill run)`);
         }
       } catch (err) {
         runtimeExitState.skippedTransactions += blockTxs.length;

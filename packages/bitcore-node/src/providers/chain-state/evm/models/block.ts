@@ -8,7 +8,7 @@ import { StorageService } from '../../../../services/storage';
 import { IBlock } from '../../../../types/Block';
 import { TransformOptions } from '../../../../types/TransformOptions';
 import { IEVMBlock, IEVMTransactionInProcess } from '../types';
-import { EVMTransactionStorage } from './transaction';
+import { EVMTransactionStorage, type ReceiptEffectOutcome } from './transaction';
 
 @LoggifyClass
 export class EVMBlockModel extends BaseBlock<IEVMBlock> {
@@ -23,6 +23,8 @@ export class EVMBlockModel extends BaseBlock<IEVMBlock> {
   async addBlock(params: {
     block: IEVMBlock;
     transactions: IEVMTransactionInProcess[];
+    failedReceiptTxids?: Set<string>;
+    receiptEffectOutcomes?: Map<string, ReceiptEffectOutcome>;
     parentChain?: string;
     forkHeight?: number;
     initialSyncComplete: boolean;
@@ -52,6 +54,8 @@ export class EVMBlockModel extends BaseBlock<IEVMBlock> {
   async processBlock(params: {
     block: IEVMBlock;
     transactions: IEVMTransactionInProcess[];
+    failedReceiptTxids?: Set<string>;
+    receiptEffectOutcomes?: Map<string, ReceiptEffectOutcome>;
     parentChain?: string;
     forkHeight?: number;
     initialSyncComplete: boolean;
@@ -74,7 +78,9 @@ export class EVMBlockModel extends BaseBlock<IEVMBlock> {
       network,
       parentChain,
       forkHeight,
-      initialSyncComplete
+      initialSyncComplete,
+      failedReceiptTxids: params.failedReceiptTxids,
+      receiptEffectOutcomes: params.receiptEffectOutcomes
     });
 
     const previousBlock = await this.collection.findOne({ hash: convertedBlock.previousBlockHash, chain, network });

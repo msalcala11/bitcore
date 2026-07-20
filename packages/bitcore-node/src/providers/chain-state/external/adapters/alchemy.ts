@@ -32,6 +32,19 @@ function safeRawContractValue(transfer: any): string {
   }
 }
 
+function tokenTransferEventId(transfer: any): string | undefined {
+  const logIndex = transfer.logIndex ?? transfer.log_index;
+  if (logIndex !== undefined && logIndex !== null && logIndex !== '') {
+    try {
+      const normalized = BigInt(logIndex);
+      if (normalized >= 0n) {
+        return `log:${normalized.toString()}`;
+      }
+    } catch {/* use the opaque provider identity below */}
+  }
+  return transfer.uniqueId ? `alchemy:${String(transfer.uniqueId)}` : undefined;
+}
+
 export class AlchemyAdapter implements IIndexedAPIAdapter {
   readonly name = 'Alchemy';
 
@@ -250,6 +263,7 @@ export class AlchemyAdapter implements IIndexedAPIAdapter {
     const rawTimestamp = transfer.metadata?.blockTimestamp;
     const blockTime = rawTimestamp ? new Date(rawTimestamp) : new Date(0);
     const safeBlockTime = isNaN(blockTime.getTime()) ? new Date(0) : blockTime;
+    const eventId = tokenStream ? tokenTransferEventId(transfer) : undefined;
 
     const transformed = {
       chain,
@@ -272,6 +286,7 @@ export class AlchemyAdapter implements IIndexedAPIAdapter {
       internal: [],
       calls: [],
       effects: [],
+      ...(eventId ? { eventId } : {}),
       category: undefined,
       wallets: [],
       transactionIndex: 0
