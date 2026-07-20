@@ -10,6 +10,7 @@ import { Gnosis } from '../../../src/providers/chain-state/evm/api/gnosis';
 import { Erc20RelatedFilterTransform } from '../../../src/providers/chain-state/evm/api/erc20Transform';
 import { MultisigRelatedFilterTransform } from '../../../src/providers/chain-state/evm/api/multisigTransform';
 import { Config } from '../../../src/services/config';
+import { Storage } from '../../../src/services/storage';
 import { EVMListTransactionsStream, TokenHistoryExpansionTransform } from '../../../src/providers/chain-state/evm/api/transform';
 import { PopulateReceiptTransform } from '../../../src/providers/chain-state/evm/api/populateReceiptTransform';
 import logger from '../../../src/logger';
@@ -2235,6 +2236,44 @@ describe('Transaction Model', function() {
 
       it('should remove stale receipt state in the persisted transaction after a fetch failure', async () => {
         sandbox.stub(Config, 'chainConfig').returns({ leanTransactionStorage: false } as any);
+        const persisted = new Map<string, any>();
+        const matches = (doc: any, filter: any) => Object.entries(filter).every(([key, value]) => doc[key] === value);
+        const transactionCollection = {
+          insertOne: async (doc: any) => {
+            persisted.set(doc.txid, { ...doc });
+          },
+          bulkWrite: async (operations: any[]) => {
+            for (const { updateOne } of operations) {
+              let doc = [...persisted.values()].find(candidate => matches(candidate, updateOne.filter));
+              if (!doc && updateOne.upsert) {
+                doc = { ...updateOne.filter };
+                persisted.set(doc.txid, doc);
+              }
+              if (!doc) {
+                continue;
+              }
+              Object.assign(doc, updateOne.update.$setOnInsert || {}, updateOne.update.$set || {});
+              for (const field of Object.keys(updateOne.update.$unset || {})) {
+                delete doc[field];
+              }
+            }
+          },
+          findOne: async (filter: any) => [...persisted.values()].find(doc => matches(doc, filter)) || null,
+          deleteMany: async (filter: any) => {
+            for (const [txid, doc] of persisted) {
+              if (matches(doc, filter)) {
+                persisted.delete(txid);
+              }
+            }
+          }
+        };
+        const emptyCollection = {
+          find: () => ({ toArray: async () => [] })
+        };
+        const originalDb = Storage.db;
+        Storage.db = {
+          collection: (name: string) => name === 'transactions' ? transactionCollection : emptyCollection
+        } as any;
         const tx = missingReceiveTx({
           _id: new ObjectId(),
           txid: '0xreceipt-fetch-failure-persistence',
@@ -2268,6 +2307,7 @@ describe('Transaction Model', function() {
           expect(stored!.receiptLogEffectsIncompleteContracts).to.equal(undefined);
         } finally {
           await EVMTransactionStorage.collection.deleteMany({ txid: tx.txid, chain: 'ETH', network: 'mainnet' });
+          Storage.db = originalDb;
         }
       });
 

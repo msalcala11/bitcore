@@ -4115,7 +4115,11 @@ export class WalletService implements IWalletService {
           gasLimit: tx.gasLimit,
           receipt: tx.receipt ? { ...tx.receipt, logs: undefined } : undefined,
           nonce: tx.nonce,
-          effects: tx.effects,
+          // Provider rows can carry a cloned, incomplete receipt-effect snapshot for
+          // internal metadata. Existing clients treat any returned effects as the
+          // authoritative token legs and overwrite the provider-derived amount, so
+          // do not expose that snapshot as row-level history effects.
+          effects: tx.tokenHistorySource === 'provider' ? undefined : tx.effects,
           tokenHistoryIncomplete: tx.tokenHistoryIncomplete || undefined
         };
         switch (tx.category) {

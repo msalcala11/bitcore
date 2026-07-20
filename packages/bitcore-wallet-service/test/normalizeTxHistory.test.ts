@@ -139,6 +139,29 @@ describe('_normalizeTxHistory move aggregation', function() {
 
     expect(txs[0].amount).to.equal('9007199254740994');
     expect(txs[0].outputs.map(output => output.amount)).to.deep.equal([large, '1']);
+    expect(txs[0].effects).to.equal(undefined);
+    expect(txs[0].tokenHistoryIncomplete).to.equal(true);
+  });
+
+  it('does not expose partial cloned effects as authoritative provider history', async function() {
+    const { txs } = await normalize([
+      moveRow('provider-1', 5, undefined, {
+        eventId: 'log:7',
+        tokenHistorySource: 'provider',
+        effects: [moveEffect(5, '')],
+        tokenHistoryIncomplete: true
+      }),
+      moveRow('provider-2', 7, undefined, {
+        eventId: 'alchemy:opaque-2',
+        tokenHistorySource: 'provider',
+        effects: [moveEffect(5, '')]
+      })
+    ]);
+
+    expect(txs[0].amount).to.equal(12);
+    expect(txs[0].outputs.map(output => output.amount)).to.deep.equal([5, 7]);
+    expect(txs[0].effects).to.equal(undefined);
+    expect(txs[0].abiType).to.deep.equal({ name: 'transfer' });
     expect(txs[0].tokenHistoryIncomplete).to.equal(true);
   });
 
