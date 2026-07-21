@@ -679,13 +679,27 @@ export class EVMTransactionModel extends BaseTransaction<IEVMTransaction> {
     receiptFetchFailed = false
   ) {
     const $set = { ...setFields };
+    const $setOnInsert = {} as Record<string, any>;
     const $unset = {} as Record<string, ''>;
     const unset = (field: string) => {
       delete $set[field];
       $unset[field] = '';
     };
+    const setOnInsert = (field: string) => {
+      if (Object.prototype.hasOwnProperty.call($set, field)) {
+        $setOnInsert[field] = $set[field];
+        delete $set[field];
+      }
+    };
 
     if (receiptFetchFailed) {
+      // A transient receipt failure must make an existing row repairable without
+      // replacing its last known-good receipt-derived state with trace-only fallbacks.
+      // New rows still need usable fallback values, so route those fields through
+      // $setOnInsert instead of dropping them entirely.
+      setOnInsert('effects');
+      setOnInsert('wallets');
+      setOnInsert('fee');
       unset('receipt');
       unset('receiptLogEffectsProcessed');
       unset('receiptLogEffectsIncompleteContracts');
@@ -703,6 +717,7 @@ export class EVMTransactionModel extends BaseTransaction<IEVMTransaction> {
 
     return {
       $set,
+      ...(Object.keys($setOnInsert).length ? { $setOnInsert } : {}),
       ...(Object.keys($unset).length ? { $unset } : {})
     };
   }

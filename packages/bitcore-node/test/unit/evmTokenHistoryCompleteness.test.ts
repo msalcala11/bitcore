@@ -1,11 +1,22 @@
 import { expect } from 'chai';
+import sinon from 'sinon';
 import { Web3 } from '@bitpay-labs/crypto-wallet-core';
 import { PopulateReceiptTransform } from '../../src/providers/chain-state/evm/api/populateReceiptTransform';
 import { EVMListTransactionsStream, TokenHistoryExpansionTransform } from '../../src/providers/chain-state/evm/api/transform';
+import { Config } from '../../src/services/config';
 
 describe('EVM token history completeness boundary', function() {
+  const sandbox = sinon.createSandbox();
   const tokenAddress = Web3.utils.toChecksumAddress('0x4fabb145d64652a948d72533023f6e7a623c7c53');
   const walletAddress = Web3.utils.toChecksumAddress('0xa91cfe0dcad33f36f3c9428d48eccbd8a71951b4');
+
+  beforeEach(function() {
+    sandbox.stub(Config, 'chainConfig').returns({ leanTransactionStorage: false } as any);
+  });
+
+  afterEach(function() {
+    sandbox.restore();
+  });
 
   const effect = (amount: string, logIndex: number) => ({
     type: 'ERC20:transfer' as const,

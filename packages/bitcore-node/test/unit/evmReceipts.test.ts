@@ -87,17 +87,19 @@ describe('normalizeReceipt', function() {
       receipt: normalizeReceipt({ ...baseReceipt(), l1Fee: '0x2e94ae15c14e0' })
     };
 
-    const update = EVMTransactionStorage.deriveReceiptLogEffects(tx);
+    const { update } = EVMTransactionStorage.deriveReceiptLogEffectsUpdate(tx);
+    const setFields = update.$set;
 
-    expect((update.receipt as any).logs).to.equal(undefined);
-    expect((update.receipt as any).logsBloom).to.equal(undefined);
-    expect((update.receipt as any).from).to.equal('0xa81011Ae274eF6deBd3BDaB634102c7b6c2C452D');
-    expect((update.receipt as any).to).to.equal('0x4Fabb145d64652a948d72533023f6E7A623C7C53');
-    expect((update.receipt as any).type).to.equal('0x2');
-    expect((update.receipt as any).root).to.equal('0x4c6f7374207265636569707420726f6f74');
-    expect((update.receipt as any).contractAddress).to.equal(null);
-    expect((update.receipt as any).l1Fee).to.equal('0x2e94ae15c14e0');
-    expect((update.receipt as any).gasUsed).to.equal(100);
+    expect((setFields.receipt as any).logs).to.equal(undefined);
+    expect((setFields.receipt as any).logsBloom).to.equal(undefined);
+    expect((setFields.receipt as any).from).to.equal('0xa81011Ae274eF6deBd3BDaB634102c7b6c2C452D');
+    expect((setFields.receipt as any).to).to.equal('0x4Fabb145d64652a948d72533023f6E7A623C7C53');
+    expect((setFields.receipt as any).type).to.equal('0x2');
+    expect((setFields.receipt as any).root).to.equal('0x4c6f7374207265636569707420726f6f74');
+    expect((setFields.receipt as any).contractAddress).to.equal(null);
+    expect((setFields.receipt as any).l1Fee).to.equal('0x2e94ae15c14e0');
+    expect((setFields.receipt as any).gasUsed).to.equal(100);
+    expect(update.$unset).to.equal(undefined);
     expect(tx.receiptLogEffectsProcessed).to.equal(true);
     expect(tx.receiptLogEffectsIncompleteContracts).to.deep.equal([
       '0x4fabb145d64652a948d72533023f6e7a623c7c53'
@@ -132,10 +134,12 @@ describe('normalizeReceipt', function() {
 
     expect(missing.outcome).to.deep.equal({ kind: 'not-derived', reason: 'missing-logs' });
     expect(missingLogsTx.effects).to.deep.equal([fallbackEffect]);
+    expect(missing.update.$set.receipt).to.deep.equal({ status: true });
     expect(missing.update.$unset).to.deep.equal({
       receiptLogEffectsProcessed: '',
       receiptLogEffectsIncompleteContracts: ''
     });
+    expect(missing.update.$unset).not.to.have.property('receipt');
     expect(empty.outcome).to.deep.equal({ kind: 'derived', completeness: { kind: 'complete' } });
     expect(emptyLogsTx.receiptLogEffectsProcessed).to.equal(true);
     expect(emptyLogsTx.receiptLogEffectsIncompleteContracts).to.equal(undefined);
