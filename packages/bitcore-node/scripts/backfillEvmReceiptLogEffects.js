@@ -23,8 +23,8 @@ function usage(errMsg) {
   console.log('USAGE: ./backfillEvmReceiptLogEffects.js <options>');
   console.log('');
   console.log('Backfills receipt-log-derived ERC20 effects onto stored EVM transactions.');
-  console.log('Idempotent: only txs without receiptLogEffectsProcessed are touched, so it is');
-  console.log('safe to re-run; txs that fail (e.g. RPC errors) are retried on the next run.');
+  console.log('Idempotent: only unprocessed or explicitly repair-pending txs are touched, so');
+  console.log('it is safe to re-run; txs that fail are retried on the next run.');
   console.log('');
   console.log('OPTIONS:');
   console.log('  --chain <value>          REQUIRED - e.g. ETH, MATIC...');
@@ -96,14 +96,18 @@ async function loadRuntimeDependencies() {
 }
 
 async function processBlockTxs(getWeb3, blockTxs) {
-  // Legacy rows that still have their receipt logs stored don't need an RPC round trip.
-  const txsNeedingReceipts = blockTxs.filter(tx => !Array.isArray(tx.receipt?.logs));
+  // Legacy rows with stored logs need no RPC unless a later resync explicitly marked
+  // their receipt stale. Repair-pending rows always refetch before derivation.
+  const txsNeedingReceipts = blockTxs.filter(tx => tx.receiptRepairPending || !Array.isArray(tx.receipt?.logs));
+  let failedTxids = new Set();
   if (txsNeedingReceipts.length) {
-    // Tolerant of unfetchable receipts: those txs come back without one, are excluded
-    // from readyTxs below, and stay in the repair query for the next run.
-    await addReceiptsToTxs(await getWeb3(), txsNeedingReceipts);
+    // Tolerant of unfetchable receipts: failed txids are excluded from readyTxs even
+    // when they retain old logs, and remain repair-pending for the next run.
+    failedTxids = await addReceiptsToTxs(await getWeb3(), txsNeedingReceipts);
   }
-  const readyTxs = blockTxs.filter(tx => Array.isArray(tx.receipt?.logs));
+  const readyTxs = blockTxs.filter(tx =>
+    !failedTxids.has(tx.txid.toLowerCase()) && Array.isArray(tx.receipt?.logs)
+  );
   const updates = new Map();
   let notDerived = 0;
   for (const tx of readyTxs) {
@@ -163,7 +167,10 @@ loadRuntimeDependencies()
       chain,
       network,
       blockHeight: { $gte: startHeight, ...(endHeight !== Infinity ? { $lte: endHeight } : {}) },
-      receiptLogEffectsProcessed: { $ne: true }
+      $or: [
+        { receiptLogEffectsProcessed: { $ne: true } },
+        { receiptRepairPending: true }
+      ]
     };
 
     let totalCount = null;

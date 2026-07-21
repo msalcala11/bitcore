@@ -448,9 +448,16 @@ export class AlchemyAssetTransferStream extends ExternalApiStream {
 
   private getDedupeKey(transfer: any): string {
     if (this.alchemyParams.dedupeBy === 'uniqueId') {
-      // A missing uniqueId degrades to hash dedupe — collapsing legs (recoverable
-      // downstream from the receipt) rather than risking duplicated rows.
-      return transfer.uniqueId || transfer.hash;
+      if (transfer.uniqueId) {
+        return transfer.uniqueId;
+      }
+      const eventId = tokenTransferEventId(transfer);
+      if (eventId?.startsWith('log:')) {
+        return `${transfer.hash}:${eventId}`;
+      }
+      // Only collapse to the transaction hash when the provider supplied neither
+      // its opaque event identity nor a canonical log index.
+      return transfer.hash;
     }
     return transfer.hash;
   }

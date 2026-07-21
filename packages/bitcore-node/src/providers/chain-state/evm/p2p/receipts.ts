@@ -32,10 +32,16 @@ export async function addReceiptsToTxs(
   for (const tx of txs) {
     const receipt = blockReceipts?.get(tx.txid.toLowerCase());
     if (receipt) {
-      setReceiptAndFee(tx, receipt);
-    } else {
-      missingTxs.push(tx);
+      try {
+        setReceiptAndFee(tx, receipt);
+        continue;
+      } catch (err: any) {
+        // A malformed item in an otherwise valid batch must not abort the block.
+        // Retry this tx through the individually isolated path below.
+        logger.warn('Ignoring malformed block receipt for tx %o: %o', tx.txid, err?.message || err);
+      }
     }
+    missingTxs.push(tx);
   }
   if (!missingTxs.length) {
     return failedTxids;
@@ -56,15 +62,13 @@ export async function addReceiptsToTxs(
         setReceiptAndFee(tx, receipt);
       } catch (err: any) {
         failedTxids.add(tx.txid.toLowerCase());
-        // The transaction may be a reused object during resync/tests. Keep the live
-        // state consistent with the persistence update that will clear stale repair
-        // metadata for this fetch failure.
-        delete tx.receipt;
-        delete tx.receiptLogEffectsProcessed;
-        delete tx.receiptLogEffectsIncompleteContracts;
+        // Preserve any last-known receipt/processed/completeness state carried by a
+        // reused resync object. Persistence distinguishes authoritative existing rows
+        // from new/pending rows and records that another receipt attempt is required.
+        tx.receiptRepairPending = true;
         // Never fail block processing over a receipt: the tx is stored without
-        // receipt-log effects (receiptLogEffectsProcessed stays unset), so it is
-        // repaired later by scripts/backfillEvmReceiptLogEffects.js or on read.
+        // authoritative receipt-log updates, so it is repaired later by
+        // scripts/backfillEvmReceiptLogEffects.js or on read.
         logger.warn('Continuing without receipt for tx %o: %o', tx.txid, err?.message || err);
       }
     }
@@ -107,8 +111,16 @@ async function getBlockReceipts(
 
   const receiptsByTxid = new Map<string, any>();
   for (const receipt of receipts) {
-    if (receipt?.transactionHash) {
-      receiptsByTxid.set(receipt.transactionHash.toLowerCase(), receipt);
+    try {
+      if (typeof receipt?.transactionHash === 'string' && receipt.transactionHash) {
+        receiptsByTxid.set(receipt.transactionHash.toLowerCase(), receipt);
+      } else if (receipt?.transactionHash != null) {
+        logger.warn('Ignoring block receipt with malformed transactionHash: %o', receipt.transactionHash);
+      }
+    } catch (err: any) {
+      // Isolate provider data errors to one item. The corresponding transaction will
+      // be fetched individually by the caller.
+      logger.warn('Ignoring malformed block receipt: %o', err?.message || err);
     }
   }
   // May be missing some of the block's txs; the caller fetches those individually.
@@ -207,11 +219,15 @@ export async function getReceiptWithRetry(
 }
 
 function setReceiptAndFee(tx: IEVMTransactionInProcess, receipt: any) {
-  tx.receipt = normalizeReceipt(receipt) as unknown as TxReceipt;
-  const fee = computeReceiptFee(tx.receipt, tx.gasPrice);
+  // Normalize and calculate before mutating the live tx so malformed provider data
+  // cannot replace a last-known good receipt with a half-applied candidate.
+  const normalizedReceipt = normalizeReceipt(receipt) as unknown as TxReceipt;
+  const fee = computeReceiptFee(normalizedReceipt, tx.gasPrice);
+  tx.receipt = normalizedReceipt;
   if (fee !== undefined) {
     tx.fee = fee;
   }
+  delete tx.receiptRepairPending;
 }
 
 export function computeReceiptFee(receipt: any, fallbackGasPrice?: number | string | bigint): number | undefined {

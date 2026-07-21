@@ -487,6 +487,18 @@ describe('AlchemyAdapter', function() {
       expect(items[0].value).to.equal('100000000');
     });
 
+    it('should preserve distinct log-indexed events when uniqueId is missing', async function() {
+      const leg1 = tokenTransfer({ uniqueId: undefined, logIndex: '0x1', rawContract: { value: '0x64' } });
+      const leg2 = tokenTransfer({ uniqueId: undefined, logIndex: '0x2', rawContract: { value: '0xc8' } });
+      axiosPostStub.onCall(0).resolves({ status: 200, data: { result: { transfers: [leg1, leg2], pageKey: null } } });
+      axiosPostStub.onCall(1).resolves({ status: 200, data: { result: { transfers: [], pageKey: null } } });
+
+      const items = await streamTokenTransfers();
+
+      expect(items.map(item => item.value)).to.deep.equal(['100', '200']);
+      expect(items.map(item => item.eventId)).to.deep.equal(['log:1', 'log:2']);
+    });
+
     it('should fall back to hash dedupe when uniqueId is missing', async function() {
       const leg1 = tokenTransfer({ uniqueId: undefined, rawContract: { value: '0x64' } });
       const leg2 = tokenTransfer({ uniqueId: undefined, rawContract: { value: '0xc8' } });

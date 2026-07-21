@@ -1,6 +1,7 @@
 import logger from '../../../../logger';
 import { MongoBound } from '../../../../models/base';
 import { TransformWithEventPipe } from '../../../../utils/streamWithEventPipe';
+import { EVMTransactionStorage } from '../models/transaction';
 import { IEVMTransaction } from '../types';
 import { TokenHistoryMode, getWalletRelevantTokenEffects } from './transform';
 import type { BaseEVMStateProvider } from './csp';
@@ -17,7 +18,7 @@ type ReceiptEnrichment = Pick<IEVMTransaction, 'effects' | 'fee' | 'receipt'> & 
 // Payload-free per-txid arithmetic mode. Tracked separately from the enrichment
 // snapshot cache: evicting a (large) snapshot must never flip a (tiny) mode record,
 // or a late duplicate would double-count legs the primary row already served.
-type TokenTxMode = { kind: 'expanded' } | { kind: 'raw' };
+type TokenTxMode = { kind: 'expanded' } | { kind: 'raw' } | { kind: 'failed' };
 
 export interface TokenExpansionOptions {
   walletAddresses: Array<string>;
@@ -85,14 +86,15 @@ export class PopulateReceiptTransform extends TransformWithEventPipe {
    * Token history: every row of a txid must serve in ONE arithmetic mode for the
    * request. 'expanded' rows carry the authoritative receipt-derived effect set (the
    * first row expands to every leg; duplicates drop); 'raw' rows serve their
-   * provider-supplied amounts. Mixing modes within a txid double-counts legs, so the
-   * first row's outcome is pinned for all of its duplicates.
+   * provider-supplied amounts; failed rows always drop. Mixing modes within a txid
+   * double-counts or resurrects legs, so the first row's outcome is pinned for all
+   * of its duplicates.
    */
   private async _transformTokenMode(tx: MongoBound<IEVMTransaction>, done) {
     const txid = tx.txid;
     const mode = this.txModes.get(txid);
     if (mode) {
-      if (mode.kind === 'expanded') {
+      if (mode.kind === 'expanded' || mode.kind === 'failed') {
         this.setMode(tx, 'drop');
       } else {
         // Metadata (receipt/fee) cloning is best-effort — a missing snapshot never
@@ -129,12 +131,18 @@ export class PopulateReceiptTransform extends TransformWithEventPipe {
       }
     }
 
-    const expandable = enriched &&
+    const failed = enriched && EVMTransactionStorage.isFailedReceipt(tx.receipt);
+    const expandable = enriched && !failed &&
       !!tx.receiptLogEffectsProcessed &&
       !tx.receiptLogEffectsIncompleteContracts?.some(contract => contract.toLowerCase() === this.tokenAddressLower) &&
       getWalletRelevantTokenEffects(tx.effects, this.walletAddressSet, this.tokenAddressLower).length > 0;
-    this.rememberMode(txid, expandable ? { kind: 'expanded' } : { kind: 'raw' });
-    this.setMode(tx, expandable ? 'expand' : 'raw');
+    const modeRecord: TokenTxMode = failed
+      ? { kind: 'failed' }
+      : expandable
+        ? { kind: 'expanded' }
+        : { kind: 'raw' };
+    this.rememberMode(txid, modeRecord);
+    this.setMode(tx, failed ? 'drop' : expandable ? 'expand' : 'raw');
     this.push(tx);
     return done();
   }
@@ -169,6 +177,8 @@ export class PopulateReceiptTransform extends TransformWithEventPipe {
   }
 
   private applyEnrichment(tx: MongoBound<IEVMTransaction>, enrichment: ReceiptEnrichment) {
+    // Snapshots are recorded only after a successful receipt fetch.
+    delete tx.receiptRepairPending;
     if (enrichment.effects !== undefined) {
       tx.effects = this.cloneEffects(enrichment.effects);
     }

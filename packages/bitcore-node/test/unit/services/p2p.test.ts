@@ -478,6 +478,7 @@ describe('P2P Service', function() {
     expect(txs[0].receipt).to.equal(undefined);
     expect(txs[0].receiptLogEffectsProcessed).to.equal(undefined);
     expect(txs[0].receiptLogEffectsIncompleteContracts).to.equal(undefined);
+    expect(txs[0].receiptRepairPending).to.equal(true);
     expect(txs[1].receipt.transactionHash).to.equal('0xpresent');
     expect([...failedTxids]).to.deep.equal(['0xmissing']);
     // The missing receipt was still retried before being given up on.

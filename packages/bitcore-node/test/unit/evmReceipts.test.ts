@@ -99,7 +99,7 @@ describe('normalizeReceipt', function() {
     expect((setFields.receipt as any).contractAddress).to.equal(null);
     expect((setFields.receipt as any).l1Fee).to.equal('0x2e94ae15c14e0');
     expect((setFields.receipt as any).gasUsed).to.equal(100);
-    expect(update.$unset).to.equal(undefined);
+    expect(update.$unset).to.deep.equal({ receiptRepairPending: '' });
     expect(tx.receiptLogEffectsProcessed).to.equal(true);
     expect(tx.receiptLogEffectsIncompleteContracts).to.deep.equal([
       '0x4fabb145d64652a948d72533023f6e7a623c7c53'
@@ -136,6 +136,7 @@ describe('normalizeReceipt', function() {
     expect(missingLogsTx.effects).to.deep.equal([fallbackEffect]);
     expect(missing.update.$set.receipt).to.deep.equal({ status: true });
     expect(missing.update.$unset).to.deep.equal({
+      receiptRepairPending: '',
       receiptLogEffectsProcessed: '',
       receiptLogEffectsIncompleteContracts: ''
     });
@@ -183,9 +184,11 @@ describe('computeReceiptFee', function() {
 });
 
 describe('addReceiptsToTxs failure metadata', function() {
-  it('returns normalized failed txids and clears stale in-memory receipt state', async function() {
+  it('returns normalized failed txids while preserving last-known in-memory receipt state', async function() {
+    const receipt = { status: false };
     const tx: any = {
       txid: '0xABC',
+      receipt,
       receiptLogEffectsProcessed: true,
       receiptLogEffectsIncompleteContracts: ['0xtoken']
     };
@@ -202,8 +205,53 @@ describe('addReceiptsToTxs failure metadata', function() {
     });
 
     expect([...failures]).to.deep.equal(['0xabc']);
-    expect(tx.receipt).to.equal(undefined);
-    expect(tx.receiptLogEffectsProcessed).to.equal(undefined);
-    expect(tx.receiptLogEffectsIncompleteContracts).to.equal(undefined);
+    expect(tx.receipt).to.equal(receipt);
+    expect(tx.receiptLogEffectsProcessed).to.equal(true);
+    expect(tx.receiptLogEffectsIncompleteContracts).to.deep.equal(['0xtoken']);
+    expect(tx.receiptRepairPending).to.equal(true);
+  });
+
+  it('isolates malformed batch receipt items and retries their transactions individually', async function() {
+    const txs = ['0x0', '0x1', '0x2'].map(txid => ({
+      txid,
+      blockHash: '0xblock',
+      blockHeight: 1,
+      gasPrice: 20
+    })) as any[];
+    const receipt = (txid: string) => ({
+      status: true,
+      transactionHash: txid,
+      gasUsed: '0xa',
+      effectiveGasPrice: '0x14',
+      logs: []
+    });
+    const individualCalls: string[] = [];
+    const web3: any = {
+      currentProvider: {
+        request: async () => ({
+          result: [
+            { ...receipt('0xignored'), transactionHash: 123 },
+            { ...receipt('0x0'), gasUsed: '0xnot-a-number' },
+            receipt('0x1')
+          ]
+        })
+      },
+      eth: {
+        getTransactionReceipt: async (txid: string) => {
+          individualCalls.push(txid);
+          return receipt(txid);
+        }
+      }
+    };
+
+    const failures = await addReceiptsToTxs(web3, txs, {
+      concurrency: 2,
+      retries: 0,
+      retryDelayMs: 0
+    });
+
+    expect([...failures]).to.deep.equal([]);
+    expect(individualCalls.sort()).to.deep.equal(['0x0', '0x2']);
+    expect(txs.map(tx => tx.receipt.transactionHash)).to.deep.equal(['0x0', '0x1', '0x2']);
   });
 });

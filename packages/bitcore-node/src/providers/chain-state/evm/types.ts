@@ -163,6 +163,12 @@ export type IEVMTransaction = ITransaction & {
   effects?: Effect[]; // Meant to replace abiType, internal, calls and data on stored txs
   receiptLogEffectsProcessed?: boolean;
   /**
+   * The most recent confirmed-block receipt fetch failed. Existing receipt-derived
+   * state remains the last-known authoritative snapshot, but reads/backfill should
+   * retry even when that snapshot contains a stripped receipt.
+   */
+  receiptRepairPending?: boolean;
+  /**
    * Lowercase token contracts for which a Transfer log was recognized but could not
    * be decoded canonically. Processing completed, but token effects for these
    * contracts are not authoritative.

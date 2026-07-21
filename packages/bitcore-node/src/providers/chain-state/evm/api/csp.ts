@@ -450,13 +450,18 @@ export class BaseEVMStateProvider extends InternalStateProvider implements IChai
 
   async populateReceipt(tx: MongoBound<IEVMTransaction>, opts?: { retries: number; retryDelayMs?: number }) {
     const additionalSet = {} as Partial<IEVMTransaction>;
-    if (!tx.receipt) {
+    if (tx.receiptRepairPending || !tx.receipt) {
       const receipt = await this.getReceipt(tx.network, tx.txid, opts);
       if (!receipt) {
+        // A repair-pending row may carry a last-known authoritative receipt. Keep it
+        // intact when the retry also fails; clearing it can resurrect failed transfers
+        // or erase known incompleteness.
         return tx;
       }
-      tx.receipt = receipt as any;
       const fee = computeReceiptFee(receipt, tx.gasPrice);
+      // Validate all receipt-derived values before replacing a last-known snapshot.
+      tx.receipt = receipt as any;
+      delete tx.receiptRepairPending;
       if (fee !== undefined) {
         tx.fee = fee;
         additionalSet.fee = fee;

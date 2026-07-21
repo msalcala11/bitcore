@@ -702,6 +702,8 @@ describe('BaseEVMStateProvider: populateReceipt', function() {
       nonce: 79903,
       transactionIndex: 0,
       effects: [],
+      receipt: { status: false, transactionHash: txid },
+      receiptRepairPending: true,
       receiptLogEffectsProcessed: true,
       receiptLogEffectsIncompleteContracts: [busdToken.toLowerCase()]
     } as any;
@@ -712,6 +714,7 @@ describe('BaseEVMStateProvider: populateReceipt', function() {
     expect(tx.fee).to.equal(2050);
     expect(tx.effects).to.deep.equal([expectedEffect]);
     expect(tx.receipt.logs).to.equal(undefined);
+    expect(tx.receiptRepairPending).to.equal(undefined);
     expect(tx.receiptLogEffectsIncompleteContracts).to.equal(undefined);
     expect(updateOne.firstCall.args[1].$set).to.deep.equal({
       receipt: tx.receipt,
@@ -719,7 +722,10 @@ describe('BaseEVMStateProvider: populateReceipt', function() {
       effects: [expectedEffect],
       receiptLogEffectsProcessed: true
     });
-    expect(updateOne.firstCall.args[1].$unset).to.deep.equal({ receiptLogEffectsIncompleteContracts: '' });
+    expect(updateOne.firstCall.args[1].$unset).to.deep.equal({
+      receiptRepairPending: '',
+      receiptLogEffectsIncompleteContracts: ''
+    });
   });
 
   it('tags wallets matched by newly derived effects', async function() {
@@ -756,7 +762,10 @@ describe('BaseEVMStateProvider: populateReceipt', function() {
     expect(tx.receiptLogEffectsIncompleteContracts).to.equal(undefined);
     expect(updateOne.firstCall.args[1].$addToSet).to.deep.equal({ wallets: { $each: [walletId] } });
     expect(updateOne.firstCall.args[1].$set.effects).to.deep.equal([expectedTransferEffect()]);
-    expect(updateOne.firstCall.args[1].$unset).to.deep.equal({ receiptLogEffectsIncompleteContracts: '' });
+    expect(updateOne.firstCall.args[1].$unset).to.deep.equal({
+      receiptRepairPending: '',
+      receiptLogEffectsIncompleteContracts: ''
+    });
   });
 
   it('does not retag wallets that are already tagged', async function() {
@@ -853,6 +862,7 @@ describe('BaseEVMStateProvider: populateReceipt', function() {
       effects: [partialEffect]
     });
     expect(updateOne.firstCall.args[1].$unset).to.deep.equal({
+      receiptRepairPending: '',
       receiptLogEffectsProcessed: '',
       receiptLogEffectsIncompleteContracts: ''
     });
@@ -899,6 +909,56 @@ describe('BaseEVMStateProvider: populateReceipt', function() {
     expect(getReceipt.called).to.equal(false);
     expect(tx.receipt).to.deep.equal(storedReceipt);
     expect(tx.effects).to.deep.equal([nativeEffect]);
+    expect(updateOne.called).to.equal(false);
+  });
+
+  it('retries repair-pending receipts without erasing last-known failed state', async function() {
+    const updateOne = sandbox.stub().resolves();
+    sandbox.stub(EVMTransactionStorage, 'collection').get(() => ({ updateOne }));
+    const provider = new BaseEVMStateProvider('ETH');
+    const getReceipt = sandbox.stub(provider, 'getReceipt').resolves(null as any);
+    const storedReceipt = { status: false, transactionHash: txid };
+    const tx = {
+      _id: new ObjectId(),
+      txid,
+      chain: 'ETH',
+      network: 'mainnet',
+      from: sourceAddress,
+      to: busdToken,
+      value: 0,
+      gasPrice: 20,
+      gasLimit: 1500000,
+      nonce: 79903,
+      transactionIndex: 0,
+      receipt: storedReceipt,
+      receiptRepairPending: true,
+      receiptLogEffectsProcessed: true,
+      effects: [],
+      calls: [{
+        from: sourceAddress,
+        to: busdToken,
+        value: '0',
+        depth: '0',
+        type: 'CALL',
+        abiType: {
+          type: 'ERC20',
+          name: 'transfer',
+          params: [
+            { name: '_to', type: 'address', value: walletAddress },
+            { name: '_value', type: 'uint256', value: amount }
+          ]
+        }
+      }]
+    } as any;
+
+    await provider.populateReceipt(tx);
+    provider.populateEffectsForAddresses(tx, [walletAddress]);
+
+    expect(getReceipt.calledOnce).to.equal(true);
+    expect(tx.receipt).to.equal(storedReceipt);
+    expect(tx.receiptRepairPending).to.equal(true);
+    expect(tx.receiptLogEffectsProcessed).to.equal(true);
+    expect(tx.effects).to.deep.equal([]);
     expect(updateOne.called).to.equal(false);
   });
 

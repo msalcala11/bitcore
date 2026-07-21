@@ -268,7 +268,14 @@ export class EVMTransactionModel extends BaseTransaction<IEVMTransaction> {
     for (const op of txOps) {
       const { chain, network } = op.updateOne.filter;
 
-      const { tos, froms } = this.getAllTouchedAddresses(op.updateOne.update.$set);
+      // Failed-receipt inserts may carry fallback effects only in $setOnInsert.
+      // Merging it first mirrors the effective inserted document; $set wins for any
+      // shared field and extra invalidations on an existing-row update are harmless.
+      const effectiveTx = {
+        ...(op.updateOne.update.$setOnInsert || {}),
+        ...(op.updateOne.update.$set || {})
+      };
+      const { tos, froms } = this.getAllTouchedAddresses(effectiveTx);
       const uniqueBatch = tos.concat(froms);
       for (const payload of uniqueBatch) {
         const lowerAddress = payload.address.toLowerCase();
@@ -316,25 +323,52 @@ export class EVMTransactionModel extends BaseTransaction<IEVMTransaction> {
         };
       });
     } else {
+      const failedReceiptTxids = params.failedReceiptTxids || new Set<string>();
+      const failedTxs = params.txs.filter(tx => failedReceiptTxids.has(tx.txid.toLowerCase()));
+      const txidsWithStoredReceipts = new Set<string>();
+      if (failedTxs.length) {
+        // One batch lookup distinguishes pending/new rows (which need the freshly
+        // computed fallback fields) from confirmed rows with a last-known receipt
+        // snapshot (which must not be regressed by a transient RPC failure).
+        const existing = await this.collection
+          .find({
+            chain,
+            network,
+            txid: { $in: failedTxs.map(tx => tx.txid) },
+            receipt: { $exists: true }
+          })
+          .project({ txid: 1 })
+          .toArray();
+        for (const tx of existing) {
+          txidsWithStoredReceipts.add(tx.txid.toLowerCase());
+        }
+      }
       return Promise.all(
         // Get all "to" and "from" addresses so we can add the any corresponding wallets
         params.txs.map(async (tx: IEVMTransactionInProcess) => {
           const wallets = await this.getWalletsForTx(chain, network, tx);
+          const txid = tx.txid.toLowerCase();
+          const receiptEffectOutcome = params.receiptEffectOutcomes?.get(txid);
 
           // If config value is set then only store needed tx properties
-          let leanTx: IEVMTransaction | IEVMTransactionInProcess = EVMTransactionStorage.stripReceiptLogs(tx);
+          // Derivation failures retain their logs as retry input. Successful outcomes
+          // compact them away before persistence as usual.
+          let leanTx: IEVMTransaction | IEVMTransactionInProcess = receiptEffectOutcome?.kind === 'not-derived'
+            ? tx
+            : EVMTransactionStorage.stripReceiptLogs(tx);
           if ((Config.chainConfig({ chain, network }) as IEVMNetworkConfig).leanTransactionStorage) {
             leanTx = EVMTransactionStorage.toLeanTransaction(leanTx);
           }
-          const txid = tx.txid.toLowerCase();
+          const receiptFetchFailed = failedReceiptTxids.has(txid);
           const update = this.buildReceiptPersistenceUpdate(
             {
               ...leanTx,
               blockTimeNormalized,
               wallets
             },
-            params.receiptEffectOutcomes?.get(txid),
-            params.failedReceiptTxids?.has(txid) === true
+            receiptEffectOutcome,
+            receiptFetchFailed,
+            receiptFetchFailed && txidsWithStoredReceipts.has(txid)
           );
           return {
             updateOne: {
@@ -656,8 +690,12 @@ export class EVMTransactionModel extends BaseTransaction<IEVMTransaction> {
       result = this.computeEffects(tx);
     }
     this.commitReceiptEffectResult(tx, result);
-    // logs can be very large and are not currently needed for any use case in this codebase.
-    this.stripReceiptLogs(tx);
+    // Successful derivation makes the compacted logs redundant. On failure they are
+    // the retry input: retaining them lets both reads and backfill retry without
+    // depending on historical RPC availability.
+    if (result.outcome.kind === 'derived') {
+      this.stripReceiptLogs(tx);
+    }
     const setFields: Partial<IEVMTransaction> = {
       effects: tx.effects,
       receipt: tx.receipt,
@@ -676,14 +714,21 @@ export class EVMTransactionModel extends BaseTransaction<IEVMTransaction> {
   buildReceiptPersistenceUpdate(
     setFields: Record<string, any>,
     outcome?: ReceiptEffectOutcome,
-    receiptFetchFailed = false
+    receiptFetchFailed = false,
+    preserveExistingReceiptState = false
   ) {
     const $set = { ...setFields };
     const $setOnInsert = {} as Record<string, any>;
     const $unset = {} as Record<string, ''>;
     const unset = (field: string) => {
       delete $set[field];
+      delete $setOnInsert[field];
       $unset[field] = '';
+    };
+    const preserve = (field: string) => {
+      delete $set[field];
+      delete $setOnInsert[field];
+      delete $unset[field];
     };
     const setOnInsert = (field: string) => {
       if (Object.prototype.hasOwnProperty.call($set, field)) {
@@ -693,24 +738,35 @@ export class EVMTransactionModel extends BaseTransaction<IEVMTransaction> {
     };
 
     if (receiptFetchFailed) {
-      // A transient receipt failure must make an existing row repairable without
-      // replacing its last known-good receipt-derived state with trace-only fallbacks.
-      // New rows still need usable fallback values, so route those fields through
-      // $setOnInsert instead of dropping them entirely.
-      setOnInsert('effects');
-      setOnInsert('wallets');
-      setOnInsert('fee');
-      unset('receipt');
-      unset('receiptLogEffectsProcessed');
-      unset('receiptLogEffectsIncompleteContracts');
+      $set.receiptRepairPending = true;
+      if (preserveExistingReceiptState) {
+        // Keep the last-known receipt-derived snapshot on a confirmed row. The
+        // insert-only copies cover the unlikely race where that row disappears
+        // between the state lookup and this upsert.
+        setOnInsert('effects');
+        setOnInsert('wallets');
+        setOnInsert('fee');
+        preserve('receipt');
+        preserve('receiptLogEffectsProcessed');
+        preserve('receiptLogEffectsIncompleteContracts');
+      } else {
+        // New rows and existing mempool/fallback rows have no authoritative receipt
+        // state to protect, so confirmation-time trace/ABI effects, wallet tags, and
+        // fee estimates must replace their pending values.
+        unset('receipt');
+        unset('receiptLogEffectsProcessed');
+        unset('receiptLogEffectsIncompleteContracts');
+      }
     } else if (outcome?.kind === 'derived') {
       $set.receiptLogEffectsProcessed = true;
+      unset('receiptRepairPending');
       if (outcome.completeness.kind === 'incomplete') {
         $set.receiptLogEffectsIncompleteContracts = [...outcome.completeness.contracts];
       } else {
         unset('receiptLogEffectsIncompleteContracts');
       }
     } else if (outcome?.kind === 'not-derived') {
+      unset('receiptRepairPending');
       unset('receiptLogEffectsProcessed');
       unset('receiptLogEffectsIncompleteContracts');
     }
