@@ -44,6 +44,10 @@ export class PopulateReceiptTransform extends TransformWithEventPipe {
 
   // Token mode only.
   private txModes = new Map<string, TokenTxMode>();
+  // Failed receipts are a safety tombstone for the lifetime of the request. Unlike
+  // arithmetic modes, they must not be evicted: rediscovering one during an RPC outage
+  // could serve a reverted provider transfer as raw history.
+  private failedTxids = new Set<string>();
   private walletAddressSet: Set<string> = new Set();
   private tokenAddressLower = '';
   private consecutiveFailures = 0;
@@ -89,9 +93,14 @@ export class PopulateReceiptTransform extends TransformWithEventPipe {
    * provider-supplied amounts; failed rows always drop. Mixing modes within a txid
    * double-counts or resurrects legs, so the first row's outcome is pinned for all
    * of its duplicates.
-   */
+  */
   private async _transformTokenMode(tx: MongoBound<IEVMTransaction>, done) {
-    const txid = tx.txid;
+    const txid = tx.txid.toLowerCase();
+    if (this.failedTxids.has(txid)) {
+      this.setMode(tx, 'drop');
+      this.push(tx);
+      return done();
+    }
     const mode = this.txModes.get(txid);
     if (mode) {
       if (mode.kind === 'expanded' || mode.kind === 'failed') {
@@ -141,6 +150,9 @@ export class PopulateReceiptTransform extends TransformWithEventPipe {
       : expandable
         ? { kind: 'expanded' }
         : { kind: 'raw' };
+    if (failed) {
+      this.failedTxids.add(txid);
+    }
     this.rememberMode(txid, modeRecord);
     this.setMode(tx, failed ? 'drop' : expandable ? 'expand' : 'raw');
     this.push(tx);

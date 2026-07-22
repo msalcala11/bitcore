@@ -823,7 +823,7 @@ describe('BaseEVMStateProvider: populateReceipt', function() {
     expect(updateOne.called).to.equal(false);
   });
 
-  it('does not mark receipt-log processed when the fetched receipt has no logs array', async function() {
+  it('keeps a fetched receipt without logs repair-pending', async function() {
     const updateOne = sandbox.stub().resolves();
     sandbox.stub(EVMTransactionStorage, 'collection').get(() => ({ updateOne }));
     const provider = new BaseEVMStateProvider('ETH');
@@ -856,13 +856,14 @@ describe('BaseEVMStateProvider: populateReceipt', function() {
 
     expect(tx.effects).to.deep.equal([partialEffect]);
     expect(tx.receiptLogEffectsProcessed).to.equal(undefined);
+    expect(tx.receiptRepairPending).to.equal(true);
     expect(updateOne.firstCall.args[1].$set).to.deep.equal({
       receipt: tx.receipt,
       fee: 2000,
-      effects: [partialEffect]
+      effects: [partialEffect],
+      receiptRepairPending: true
     });
     expect(updateOne.firstCall.args[1].$unset).to.deep.equal({
-      receiptRepairPending: '',
       receiptLogEffectsProcessed: '',
       receiptLogEffectsIncompleteContracts: ''
     });
@@ -959,6 +960,75 @@ describe('BaseEVMStateProvider: populateReceipt', function() {
     expect(tx.receiptRepairPending).to.equal(true);
     expect(tx.receiptLogEffectsProcessed).to.equal(true);
     expect(tx.effects).to.deep.equal([]);
+    expect(updateOne.called).to.equal(false);
+  });
+
+  it('preserves a last-known snapshot when a refresh candidate has no logs', async function() {
+    const updateOne = sandbox.stub().resolves();
+    sandbox.stub(EVMTransactionStorage, 'collection').get(() => ({ updateOne }));
+    const provider = new BaseEVMStateProvider('ETH');
+    const { logs, ...receiptWithoutLogs } = receiptWithTransferLog();
+    sandbox.stub(provider, 'getReceipt').resolves(receiptWithoutLogs as any);
+    const storedReceipt = { status: false, transactionHash: txid };
+    const tx = {
+      _id: new ObjectId(),
+      txid,
+      chain: 'ETH',
+      network: 'mainnet',
+      from: sourceAddress,
+      to: busdToken,
+      value: 0,
+      gasPrice: 20,
+      gasLimit: 1500000,
+      nonce: 79903,
+      transactionIndex: 0,
+      receipt: storedReceipt,
+      receiptRepairPending: true,
+      receiptLogEffectsProcessed: true,
+      receiptLogEffectsIncompleteContracts: [busdToken.toLowerCase()],
+      effects: []
+    } as any;
+
+    await provider.populateReceipt(tx);
+
+    expect(tx.receipt).to.equal(storedReceipt);
+    expect(tx.effects).to.deep.equal([]);
+    expect(tx.receiptRepairPending).to.equal(true);
+    expect(tx.receiptLogEffectsProcessed).to.equal(true);
+    expect(tx.receiptLogEffectsIncompleteContracts).to.deep.equal([busdToken.toLowerCase()]);
+    expect(updateOne.called).to.equal(false);
+  });
+
+  it('serves a last-known snapshot when its receipt refresh throws', async function() {
+    const updateOne = sandbox.stub().resolves();
+    sandbox.stub(EVMTransactionStorage, 'collection').get(() => ({ updateOne }));
+    const provider = new BaseEVMStateProvider('ETH');
+    sandbox.stub(provider, 'getReceipt').rejects(new Error('historical RPC unavailable'));
+    const storedReceipt = { status: false, transactionHash: txid };
+    const tx = {
+      _id: new ObjectId(),
+      txid,
+      chain: 'ETH',
+      network: 'mainnet',
+      from: sourceAddress,
+      to: busdToken,
+      value: 0,
+      gasPrice: 20,
+      gasLimit: 1500000,
+      nonce: 79903,
+      transactionIndex: 0,
+      receipt: storedReceipt,
+      receiptRepairPending: true,
+      receiptLogEffectsProcessed: true,
+      effects: []
+    } as any;
+
+    const result = await provider.populateReceipt(tx);
+
+    expect(result).to.equal(tx);
+    expect(tx.receipt).to.equal(storedReceipt);
+    expect(tx.receiptRepairPending).to.equal(true);
+    expect(tx.receiptLogEffectsProcessed).to.equal(true);
     expect(updateOne.called).to.equal(false);
   });
 

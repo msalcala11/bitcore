@@ -1086,6 +1086,35 @@ describe('Transaction Model', function() {
             expect(rows[2].receipt).to.equal(undefined);
           });
 
+          it('should keep failed transactions dropped when their mode record is evicted during an outage', async () => {
+            const populateReceipt = sandbox.stub();
+            populateReceipt.onFirstCall().callsFake(async tx => ({
+              ...tx,
+              receipt: { status: false },
+              effects: [],
+              receiptLogEffectsProcessed: true
+            }));
+            populateReceipt.onSecondCall().rejects(new Error('provider outage'));
+            const populate = new PopulateReceiptTransform(
+              { populateReceipt } as any,
+              {
+                walletAddresses: [walletAddress],
+                tokenAddress: busdToken,
+                maxModeEntries: 1,
+                breakerThreshold: 1
+              }
+            );
+            const rows = new Array<any>();
+            const collector = await collectRows(populate, populate, rows);
+            collector.write(providerRow('0xfailed', '100'));
+            collector.write(providerRow('0xother', '200')); // evicts the failed mode and opens the breaker
+            collector.write(providerRow('0xfailed', '300')); // safety tombstone must still drop
+            await collector.end();
+
+            expect(populateReceipt.callCount).to.equal(2);
+            expect(rows.map(row => row.tokenHistoryMode)).to.deep.equal(['drop', 'raw', 'drop']);
+          });
+
           it('should evict the oldest mode records past the cap and warn once', async () => {
             const warn = sandbox.stub(logger, 'warn');
             const populateReceipt = sandbox.stub().callsFake(enrichmentOf([walletSendEffect('100')]));
@@ -2233,8 +2262,8 @@ describe('Transaction Model', function() {
         expect(storedTx.receipt!.logs).to.equal(undefined);
       });
 
-      it('should retain receipt logs when effect derivation must be retried', async () => {
-        sandbox.stub(Config, 'chainConfig').returns({ leanTransactionStorage: false } as any);
+      it('should retain derivation inputs under lean storage when effect derivation must be retried', async () => {
+        sandbox.stub(Config, 'chainConfig').returns({ leanTransactionStorage: true } as any);
         sandbox.stub(WalletAddressStorage, 'collection').get(() => ({
           find: sandbox.stub().returns({ toArray: sandbox.stub().resolves([]) })
         }));
@@ -2255,6 +2284,7 @@ describe('Transaction Model', function() {
 
         const update: any = ops[0].updateOne.update;
         expect(update.$set.receipt.logs).to.deep.equal(tx.receipt.logs);
+        expect(update.$set.calls).to.deep.equal(tx.calls);
         expect(update.$unset).to.deep.equal({
           receiptRepairPending: '',
           receiptLogEffectsProcessed: '',
@@ -2286,34 +2316,31 @@ describe('Transaction Model', function() {
         });
         const update: any = ops[0].updateOne.update;
 
-        expect(update.$set).to.deep.include({
-          effects: tx.effects,
-          wallets: [],
-          fee: tx.fee,
-          receiptRepairPending: true
-        });
-        expect(update.$setOnInsert).to.equal(undefined);
-        expect(update.$unset).to.deep.equal({
-          receipt: '',
-          receiptLogEffectsProcessed: '',
-          receiptLogEffectsIncompleteContracts: ''
-        });
-        expect(update.$set).not.to.have.property('receipt');
-        expect(update.$set).not.to.have.property('receiptLogEffectsProcessed');
-        expect(update.$set).not.to.have.property('receiptLogEffectsIncompleteContracts');
+        expect(update).to.be.an('array').with.length(1);
+        const atomicSet = update[0].$set;
+        expect(atomicSet.effects.$cond[2]).to.deep.equal({ $literal: tx.effects });
+        expect(atomicSet.wallets.$cond[2]).to.deep.equal({ $literal: [] });
+        expect(atomicSet.fee.$cond[2]).to.deep.equal({ $literal: tx.fee });
+        expect(atomicSet.receipt.$cond[2]).to.equal('$$REMOVE');
+        expect(atomicSet.receiptLogEffectsProcessed.$cond[2]).to.equal('$$REMOVE');
+        expect(atomicSet.receiptLogEffectsIncompleteContracts.$cond[2]).to.equal('$$REMOVE');
+        expect(atomicSet.receiptRepairPending).to.deep.equal({ $literal: true });
+        expect((ops[0] as any).balanceCacheTx.effects).to.deep.equal(tx.effects);
       });
 
-      it('should expire token balance caches for insert-only fallback effects', async () => {
+      it('should expire token balance caches for fallback effects', async () => {
         const expire = sandbox.stub(CacheStorage, 'expire').resolves();
         const fallbackEffect = expectedMissingReceiveEffect({ amount: '3' });
 
         await EVMTransactionStorage.expireBalanceCache([{
           updateOne: {
             filter: { chain: 'ETH', network: 'mainnet' },
-            update: {
-              $set: { from: missingReceiveTxFrom, to: busdToken },
-              $setOnInsert: { effects: [fallbackEffect] }
-            }
+            update: [{ $set: { receiptRepairPending: { $literal: true } } }]
+          },
+          balanceCacheTx: {
+            from: missingReceiveTxFrom,
+            to: busdToken,
+            effects: [fallbackEffect]
           }
         }]);
 
@@ -2330,6 +2357,36 @@ describe('Transaction Model', function() {
         sandbox.stub(Config, 'chainConfig').returns({ leanTransactionStorage: false } as any);
         const persisted = new Map<string, any>();
         const matches = (doc: any, filter: any) => Object.entries(filter).every(([key, value]) => doc[key] === value);
+        const REMOVE = Symbol('remove');
+        const evaluate = (expression: any, doc: any): any => {
+          if (expression === '$$REMOVE') {
+            return REMOVE;
+          }
+          if (typeof expression === 'string' && expression.startsWith('$')) {
+            return doc[expression.slice(1)];
+          }
+          if (!expression || typeof expression !== 'object' || Array.isArray(expression)) {
+            return expression;
+          }
+          if (Object.prototype.hasOwnProperty.call(expression, '$literal')) {
+            return expression.$literal;
+          }
+          if (expression.$type) {
+            const field = expression.$type.slice(1);
+            return Object.prototype.hasOwnProperty.call(doc, field) ? typeof doc[field] : 'missing';
+          }
+          if (expression.$eq) {
+            return evaluate(expression.$eq[0], doc) === evaluate(expression.$eq[1], doc);
+          }
+          if (expression.$ne) {
+            return evaluate(expression.$ne[0], doc) !== evaluate(expression.$ne[1], doc);
+          }
+          if (expression.$cond) {
+            return evaluate(expression.$cond[evaluate(expression.$cond[0], doc) ? 1 : 2], doc);
+          }
+          return expression;
+        };
+        const hooks = { beforeAtomicWrite: undefined as ((filter: any) => void) | undefined };
         const transactionCollection = {
           insertOne: async (doc: any) => {
             persisted.set(doc.txid, { ...doc });
@@ -2360,12 +2417,27 @@ describe('Transaction Model', function() {
               if (!doc) {
                 continue;
               }
-              if (inserted) {
-                Object.assign(doc, updateOne.update.$setOnInsert || {});
-              }
-              Object.assign(doc, updateOne.update.$set || {});
-              for (const field of Object.keys(updateOne.update.$unset || {})) {
-                delete doc[field];
+              if (Array.isArray(updateOne.update)) {
+                hooks.beforeAtomicWrite?.(updateOne.filter);
+                for (const stage of updateOne.update) {
+                  const input = { ...doc };
+                  for (const [field, expression] of Object.entries(stage.$set || {})) {
+                    const value = evaluate(expression, input);
+                    if (value === REMOVE || value === undefined) {
+                      delete doc[field];
+                    } else {
+                      doc[field] = value;
+                    }
+                  }
+                }
+              } else {
+                if (inserted) {
+                  Object.assign(doc, updateOne.update.$setOnInsert || {});
+                }
+                Object.assign(doc, updateOne.update.$set || {});
+                for (const field of Object.keys(updateOne.update.$unset || {})) {
+                  delete doc[field];
+                }
               }
             }
           },
@@ -2427,6 +2499,17 @@ describe('Transaction Model', function() {
         delete (pendingExistingTx as any).receipt;
         await EVMTransactionStorage.collection.insertOne(pendingExistingTx as any);
 
+        const racingPendingTx = missingReceiveTx({
+          _id: new ObjectId(),
+          txid: '0xconcurrent-read-repair',
+          blockHeight: -1,
+          effects: undefined,
+          wallets: [],
+          fee: 111
+        });
+        delete (racingPendingTx as any).receipt;
+        await EVMTransactionStorage.collection.insertOne(racingPendingTx as any);
+
         const fallbackEffect = {
           type: 'ERC20:transfer',
           to: missingReceiveWallet,
@@ -2463,6 +2546,15 @@ describe('Transaction Model', function() {
         delete (confirmedPendingTx as any).receipt;
         const pendingTxid = confirmedPendingTx.txid.toLowerCase();
 
+        const confirmedRacingTx = missingReceiveTx({
+          _id: racingPendingTx._id,
+          txid: racingPendingTx.txid,
+          effects: [fallbackEffect],
+          fee: fallbackFee
+        });
+        delete (confirmedRacingTx as any).receipt;
+        const racingTxid = confirmedRacingTx.txid.toLowerCase();
+
         const newTx = missingReceiveTx({
           _id: new ObjectId(),
           txid: '0xnew-receipt-fetch-failure',
@@ -2472,14 +2564,30 @@ describe('Transaction Model', function() {
         delete (newTx as any).receipt;
         const newTxid = newTx.txid.toLowerCase();
 
+        const concurrentReceipt = { status: false, gasUsed: 10, effectiveGasPrice: 20, l1Fee: 50 };
+        hooks.beforeAtomicWrite = filter => {
+          if (filter.txid !== racingPendingTx.txid) {
+            return;
+          }
+          const doc = persisted.get(racingPendingTx.txid)!;
+          Object.assign(doc, {
+            receipt: concurrentReceipt,
+            effects: [],
+            wallets: [walletId],
+            fee: repairedFee,
+            receiptLogEffectsProcessed: true
+          });
+        };
+
         try {
           await EVMTransactionStorage.batchImport({
-            txs: [resyncedTx as any, failedResyncedTx as any, confirmedPendingTx as any, newTx as any],
-            failedReceiptTxids: new Set([txid, failedTxid, pendingTxid, newTxid]),
+            txs: [resyncedTx as any, failedResyncedTx as any, confirmedPendingTx as any, confirmedRacingTx as any, newTx as any],
+            failedReceiptTxids: new Set([txid, failedTxid, pendingTxid, racingTxid, newTxid]),
             receiptEffectOutcomes: new Map([
               [txid, { kind: 'not-derived', reason: 'missing-logs' }],
               [failedTxid, { kind: 'not-derived', reason: 'missing-logs' }],
               [pendingTxid, { kind: 'not-derived', reason: 'missing-logs' }],
+              [racingTxid, { kind: 'not-derived', reason: 'missing-logs' }],
               [newTxid, { kind: 'not-derived', reason: 'missing-logs' }]
             ]),
             height: resyncedTx.blockHeight,
@@ -2513,6 +2621,15 @@ describe('Transaction Model', function() {
           expect(confirmedPending!.receipt).to.equal(undefined);
           expect(confirmedPending!.receiptRepairPending).to.equal(true);
 
+          const concurrentlyRepaired = await EVMTransactionStorage.collection.findOne({ txid: confirmedRacingTx.txid, chain: 'ETH', network: 'mainnet' });
+          expect(concurrentlyRepaired!.blockHeight).to.equal(confirmedRacingTx.blockHeight);
+          expect(concurrentlyRepaired!.effects).to.deep.equal([]);
+          expect(concurrentlyRepaired!.wallets.map(wallet => wallet.toHexString())).to.deep.equal([walletId.toHexString()]);
+          expect(concurrentlyRepaired!.fee).to.equal(repairedFee);
+          expect(concurrentlyRepaired!.receipt).to.deep.equal(concurrentReceipt);
+          expect(concurrentlyRepaired!.receiptLogEffectsProcessed).to.equal(true);
+          expect(concurrentlyRepaired!.receiptRepairPending).to.equal(true);
+
           const inserted = await EVMTransactionStorage.collection.findOne({ txid: newTx.txid, chain: 'ETH', network: 'mainnet' });
           expect(inserted!.effects).to.deep.equal([fallbackEffect]);
           expect(inserted!.wallets.map(wallet => wallet.toHexString())).to.deep.equal([fallbackWalletId.toHexString()]);
@@ -2523,6 +2640,7 @@ describe('Transaction Model', function() {
           await EVMTransactionStorage.collection.deleteMany({ txid: existingTx.txid, chain: 'ETH', network: 'mainnet' });
           await EVMTransactionStorage.collection.deleteMany({ txid: failedExistingTx.txid, chain: 'ETH', network: 'mainnet' });
           await EVMTransactionStorage.collection.deleteMany({ txid: pendingExistingTx.txid, chain: 'ETH', network: 'mainnet' });
+          await EVMTransactionStorage.collection.deleteMany({ txid: racingPendingTx.txid, chain: 'ETH', network: 'mainnet' });
           await EVMTransactionStorage.collection.deleteMany({ txid: newTx.txid, chain: 'ETH', network: 'mainnet' });
           Storage.db = originalDb;
         }

@@ -134,9 +134,10 @@ describe('normalizeReceipt', function() {
 
     expect(missing.outcome).to.deep.equal({ kind: 'not-derived', reason: 'missing-logs' });
     expect(missingLogsTx.effects).to.deep.equal([fallbackEffect]);
+    expect(missingLogsTx.receiptRepairPending).to.equal(true);
     expect(missing.update.$set.receipt).to.deep.equal({ status: true });
+    expect(missing.update.$set.receiptRepairPending).to.equal(true);
     expect(missing.update.$unset).to.deep.equal({
-      receiptRepairPending: '',
       receiptLogEffectsProcessed: '',
       receiptLogEffectsIncompleteContracts: ''
     });

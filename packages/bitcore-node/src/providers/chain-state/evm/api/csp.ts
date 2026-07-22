@@ -450,46 +450,115 @@ export class BaseEVMStateProvider extends InternalStateProvider implements IChai
 
   async populateReceipt(tx: MongoBound<IEVMTransaction>, opts?: { retries: number; retryDelayMs?: number }) {
     const additionalSet = {} as Partial<IEVMTransaction>;
+    const hadStoredReceipt = !!tx.receipt;
+    let fetchedReceipt = false;
+    let candidate: MongoBound<IEVMTransaction>;
+
     if (tx.receiptRepairPending || !tx.receipt) {
-      const receipt = await this.getReceipt(tx.network, tx.txid, opts);
+      let receipt;
+      try {
+        receipt = await this.getReceipt(tx.network, tx.txid, opts);
+      } catch (err) {
+        // A refresh must never turn a usable last-known snapshot into a 404 merely
+        // because the historical RPC rejected or returned malformed data.
+        if (hadStoredReceipt) {
+          return tx;
+        }
+        throw err;
+      }
       if (!receipt) {
         // A repair-pending row may carry a last-known authoritative receipt. Keep it
         // intact when the retry also fails; clearing it can resurrect failed transfers
         // or erase known incompleteness.
         return tx;
       }
-      const fee = computeReceiptFee(receipt, tx.gasPrice);
-      // Validate all receipt-derived values before replacing a last-known snapshot.
-      tx.receipt = receipt as any;
-      delete tx.receiptRepairPending;
+      let fee;
+      try {
+        fee = computeReceiptFee(receipt, tx.gasPrice);
+      } catch (err) {
+        if (hadStoredReceipt) {
+          return tx;
+        }
+        throw err;
+      }
+      candidate = {
+        ...tx,
+        receipt: receipt as any,
+        effects: tx.effects?.map(effect => ({ ...effect })),
+        wallets: tx.wallets ? [...tx.wallets] : tx.wallets,
+        receiptLogEffectsIncompleteContracts: tx.receiptLogEffectsIncompleteContracts
+          ? [...tx.receiptLogEffectsIncompleteContracts]
+          : undefined
+      };
+      fetchedReceipt = true;
       if (fee !== undefined) {
-        tx.fee = fee;
+        candidate.fee = fee;
         additionalSet.fee = fee;
       }
       // Derive receipt-log effects while the logs are in hand.
     } else if (Array.isArray(tx.receipt.logs)) {
       // Legacy rows persisted full receipts. Derive effects from the stored logs (no RPC
       // needed) and persist the stripped receipt so the logs stop shipping on every read.
+      candidate = {
+        ...tx,
+        receipt: { ...tx.receipt, logs: [...tx.receipt.logs] },
+        effects: tx.effects?.map(effect => ({ ...effect })),
+        wallets: tx.wallets ? [...tx.wallets] : tx.wallets,
+        receiptLogEffectsIncompleteContracts: tx.receiptLogEffectsIncompleteContracts
+          ? [...tx.receiptLogEffectsIncompleteContracts]
+          : undefined
+      };
     } else {
       // Stored, already-stripped receipt: served as-is; historical rows missing receipt-log
       // effects are upgraded by scripts/backfillEvmReceiptLogEffects.js, not here.
       return tx;
     }
-    const { update } = EVMTransactionStorage.deriveReceiptLogEffectsUpdate(
-      tx as IEVMTransactionInProcess,
+    const { outcome, update } = EVMTransactionStorage.deriveReceiptLogEffectsUpdate(
+      candidate as IEVMTransactionInProcess,
       additionalSet
     );
+
+    // A fetched candidate that could not be derived must not replace an existing
+    // authoritative or known-incomplete snapshot. Keep the old state and its pending
+    // marker so a later read/backfill can try a fresh candidate.
+    if (fetchedReceipt && hadStoredReceipt && outcome.kind === 'not-derived') {
+      return tx;
+    }
+
+    let newWallets: ObjectID[] = [];
     if (tx._id) {
       // Late-derived effects can add addresses the sync-time tagging never saw; without a
       // retag the wallets-filtered history query can never surface the repaired tx.
-      const newWallets = await EVMTransactionStorage.getNewWalletsForTx(tx.chain, tx.network, tx);
+      newWallets = await EVMTransactionStorage.getNewWalletsForTx(candidate.chain, candidate.network, candidate);
       if (newWallets.length) {
-        tx.wallets = [...(tx.wallets || []), ...newWallets];
+        candidate.wallets = [...(candidate.wallets || []), ...newWallets];
       }
       await EVMTransactionStorage.collection.updateOne({ _id: tx._id }, {
         ...update,
         ...(newWallets.length ? { $addToSet: { wallets: { $each: newWallets } } } : {})
       });
+    }
+
+    // Commit the candidate to the live object only after derivation and persistence
+    // have reached a consistent outcome.
+    tx.receipt = candidate.receipt;
+    tx.effects = candidate.effects;
+    tx.fee = candidate.fee;
+    tx.wallets = candidate.wallets;
+    if (candidate.receiptLogEffectsProcessed) {
+      tx.receiptLogEffectsProcessed = true;
+    } else {
+      delete tx.receiptLogEffectsProcessed;
+    }
+    if (candidate.receiptLogEffectsIncompleteContracts) {
+      tx.receiptLogEffectsIncompleteContracts = [...candidate.receiptLogEffectsIncompleteContracts];
+    } else {
+      delete tx.receiptLogEffectsIncompleteContracts;
+    }
+    if (candidate.receiptRepairPending) {
+      tx.receiptRepairPending = true;
+    } else {
+      delete tx.receiptRepairPending;
     }
     return tx;
   }
