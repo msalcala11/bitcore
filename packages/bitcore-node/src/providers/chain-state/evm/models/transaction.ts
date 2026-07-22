@@ -147,17 +147,16 @@ export class EVMTransactionModel extends BaseTransaction<IEVMTransaction> {
     operations.push(this.pruneMempool({ ...params }));
     const txOps: any[] = await this.addTransactions({ ...params });
     logger.debug('Writing Transactions: %o', txOps.length);
+    const receiptFailureOps = txOps.filter(op => op.receiptFailureUpdates);
+    const regularTxOps = txOps.filter(op => !op.receiptFailureUpdates);
     operations.push(
-      ...partition(txOps, txOps.length / Config.get().maxPoolSize).map(txBatch =>
+      ...partition(regularTxOps, regularTxOps.length / Config.get().maxPoolSize).map(txBatch =>
         this.collection.bulkWrite(
-          txBatch.map(op => {
-            // balanceCacheTx is local operation metadata, not part of Mongo's
-            // bulk-write grammar.
-            return this.toMempoolSafeUpsert({ updateOne: op.updateOne }, params.height);
-          }),
+          txBatch.map(op => this.toMempoolSafeUpsert(op, params.height)),
           { ordered: false }
         )
-      )
+      ),
+      ...receiptFailureOps.map(op => this.persistReceiptFailure(op, params.height))
     );
     await Promise.all(operations);
 
@@ -272,9 +271,10 @@ export class EVMTransactionModel extends BaseTransaction<IEVMTransaction> {
     for (const op of txOps) {
       const { chain, network } = op.updateOne.filter;
 
-      // Atomic failed-receipt updates retain their fallback transaction as local
-      // metadata because their Mongo update is an aggregation pipeline.
-      const effectiveTx = op.balanceCacheTx || {
+      // Failed-receipt persistence may preserve a concurrently repaired snapshot,
+      // but invalidating the fallback addresses as well is harmless and ensures new
+      // rows invalidate every balance touched by the confirmation data.
+      const effectiveTx = {
         ...(op.updateOne.update.$setOnInsert || {}),
         ...(op.updateOne.update.$set || {})
       };
@@ -354,11 +354,11 @@ export class EVMTransactionModel extends BaseTransaction<IEVMTransaction> {
             blockTimeNormalized,
             wallets
           };
-          const update = this.buildReceiptPersistenceUpdate(
-            setFields,
-            receiptEffectOutcome,
-            receiptFetchFailed
-          );
+          const receiptFailureUpdates = receiptFetchFailed
+            ? this.buildReceiptFailureUpdates(setFields)
+            : undefined;
+          const update = receiptFailureUpdates?.fallback ||
+            this.buildReceiptPersistenceUpdate(setFields, receiptEffectOutcome);
           return {
             updateOne: {
               filter: { txid: tx.txid, chain, network },
@@ -366,9 +366,8 @@ export class EVMTransactionModel extends BaseTransaction<IEVMTransaction> {
               upsert: true,
               forceServerObjectId: true
             },
-            // Atomic receipt-failure updates are aggregation pipelines, so retain the
-            // fallback transaction separately for post-write cache invalidation.
-            ...(receiptFetchFailed ? { balanceCacheTx: setFields } : {})
+            // Local metadata consumed by batchImport; never passed to MongoDB.
+            ...(receiptFailureUpdates ? { receiptFailureUpdates } : {})
           };
         })
       );
@@ -709,13 +708,8 @@ export class EVMTransactionModel extends BaseTransaction<IEVMTransaction> {
    */
   buildReceiptPersistenceUpdate(
     setFields: Record<string, any>,
-    outcome?: ReceiptEffectOutcome,
-    receiptFetchFailed = false
+    outcome?: ReceiptEffectOutcome
   ): any {
-    if (receiptFetchFailed) {
-      return this.buildAtomicReceiptFailureUpdate(setFields);
-    }
-
     const $set = { ...setFields };
     const $unset = {} as Record<string, ''>;
     const unset = (field: string) => {
@@ -744,48 +738,109 @@ export class EVMTransactionModel extends BaseTransaction<IEVMTransaction> {
   }
 
   /**
-   * Atomically preserves an existing receipt-derived snapshot or writes the supplied
-   * confirmation fallback when no receipt exists. The condition is evaluated by
-   * MongoDB as part of the update, so a concurrent read repair cannot be erased
-   * between a client-side lookup and the write.
+   * Builds MongoDB 3.6-compatible updates for a confirmation whose receipt could not
+   * be fetched. The fallback is safe only while the stored receipt is absent; the
+   * preserve update never modifies receipt-derived fields. insertOrPreserve creates
+   * the fallback for a new row without overwriting a row inserted concurrently.
    */
-  private buildAtomicReceiptFailureUpdate(setFields: Record<string, any>) {
-    const authoritativeFields = [
+  private buildReceiptFailureUpdates(setFields: Record<string, any>) {
+    const authoritativeFields = new Set([
       'receipt',
       'receiptLogEffectsProcessed',
       'receiptLogEffectsIncompleteContracts',
       'effects',
       'wallets',
       'fee'
-    ];
+    ]);
     const fallbackFields = new Set(['effects', 'wallets', 'fee']);
-    const hasStoredReceipt = { $ne: [{ $type: '$receipt' }, 'missing'] };
-    const existingOrRemove = (field: string) => ({
-      $cond: [
-        { $eq: [{ $type: `$${field}` }, 'missing'] },
-        '$$REMOVE',
-        `$${field}`
-      ]
-    });
-    const atomicSet = {} as Record<string, any>;
+    const commonSet = {} as Record<string, any>;
+    const fallbackSet = {} as Record<string, any>;
+    const fallbackUnset = {
+      receipt: '',
+      receiptLogEffectsProcessed: '',
+      receiptLogEffectsIncompleteContracts: ''
+    } as Record<string, ''>;
 
     for (const [field, value] of Object.entries(setFields)) {
-      if (field !== '_id' && !authoritativeFields.includes(field) && value !== undefined) {
-        atomicSet[field] = { $literal: value };
+      if (field !== '_id' && value !== undefined) {
+        if (authoritativeFields.has(field)) {
+          if (fallbackFields.has(field)) {
+            fallbackSet[field] = value;
+          }
+        } else {
+          commonSet[field] = value;
+        }
       }
     }
-    for (const field of authoritativeFields) {
-      const fallback = fallbackFields.has(field) &&
-        Object.prototype.hasOwnProperty.call(setFields, field) && setFields[field] !== undefined
-        ? { $literal: setFields[field] }
-        : '$$REMOVE';
-      atomicSet[field] = {
-        $cond: [hasStoredReceipt, existingOrRemove(field), fallback]
-      };
+    for (const field of fallbackFields) {
+      if (!Object.prototype.hasOwnProperty.call(fallbackSet, field)) {
+        fallbackUnset[field] = '';
+      }
     }
-    atomicSet.receiptRepairPending = { $literal: true };
+    commonSet.receiptRepairPending = true;
 
-    return [{ $set: atomicSet }];
+    return {
+      preserve: { $set: commonSet },
+      fallback: {
+        $set: { ...commonSet, ...fallbackSet },
+        $unset: fallbackUnset
+      },
+      insertOrPreserve: {
+        $set: commonSet,
+        ...(Object.keys(fallbackSet).length ? { $setOnInsert: fallbackSet } : {})
+      }
+    };
+  }
+
+  /**
+   * Persists a failed receipt fetch without MongoDB 4.2+ update pipelines. Each
+   * conditional update is atomic on MongoDB 3.6. If a repair changes receipt state
+   * between the two writes, neither condition matches and the loop retries against
+   * the new state. The unconditional upsert is non-destructive for existing rows.
+   */
+  private async persistReceiptFailure(op: any, height: number) {
+    const { filter } = op.updateOne;
+    const { fallback, insertOrPreserve, preserve } = op.receiptFailureUpdates;
+    if (height < SpentHeightIndicators.minimum) {
+      const mempoolSafe = this.toMempoolSafeUpsert({ updateOne: op.updateOne }, height);
+      await this.collection.updateOne(
+        mempoolSafe.updateOne.filter,
+        mempoolSafe.updateOne.update,
+        { upsert: true }
+      );
+      return;
+    }
+
+    const matched = (result: any) => (result.matchedCount ?? result.result?.n ?? 0) > 0;
+    const upserted = (result: any) =>
+      (result.upsertedCount ?? result.result?.upserted?.length ?? (result.upsertedId ? 1 : 0)) > 0;
+    const maxAttempts = 5;
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      const preserved = await this.collection.updateOne(
+        { ...filter, receipt: { $exists: true } },
+        preserve
+      );
+      if (matched(preserved)) {
+        return;
+      }
+
+      const fellBack = await this.collection.updateOne(
+        { ...filter, receipt: { $exists: false } },
+        fallback
+      );
+      if (matched(fellBack)) {
+        return;
+      }
+
+      // No row existed when the conditional writes ran. This upsert puts fallback
+      // state only on insert; if another writer wins, its receipt state is preserved
+      // and the next iteration finishes via one of the conditional updates above.
+      const inserted = await this.collection.updateOne(filter, insertOrPreserve, { upsert: true });
+      if (upserted(inserted)) {
+        return;
+      }
+    }
+    throw new Error(`Unable to persist receipt-fetch failure for ${filter.chain}:${filter.network}:${filter.txid}; receipt state kept changing`);
   }
 
   isFailedReceipt(receipt?: { status?: boolean | number | string | bigint }) {

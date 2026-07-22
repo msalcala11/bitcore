@@ -2317,16 +2317,32 @@ describe('Transaction Model', function() {
         });
         const update: any = ops[0].updateOne.update;
 
-        expect(update).to.be.an('array').with.length(1);
-        const atomicSet = update[0].$set;
-        expect(atomicSet.effects.$cond[2]).to.deep.equal({ $literal: tx.effects });
-        expect(atomicSet.wallets.$cond[2]).to.deep.equal({ $literal: [] });
-        expect(atomicSet.fee.$cond[2]).to.deep.equal({ $literal: tx.fee });
-        expect(atomicSet.receipt.$cond[2]).to.equal('$$REMOVE');
-        expect(atomicSet.receiptLogEffectsProcessed.$cond[2]).to.equal('$$REMOVE');
-        expect(atomicSet.receiptLogEffectsIncompleteContracts.$cond[2]).to.equal('$$REMOVE');
-        expect(atomicSet.receiptRepairPending).to.deep.equal({ $literal: true });
-        expect((ops[0] as any).balanceCacheTx.effects).to.deep.equal(tx.effects);
+        expect(update).not.to.be.an('array');
+        expect(update.$set.effects).to.deep.equal(tx.effects);
+        expect(update.$set.wallets).to.deep.equal([]);
+        expect(update.$set.fee).to.equal(tx.fee);
+        expect(update.$set.receiptRepairPending).to.equal(true);
+        expect(update.$unset).to.deep.equal({
+          receipt: '',
+          receiptLogEffectsProcessed: '',
+          receiptLogEffectsIncompleteContracts: ''
+        });
+        const receiptFailureUpdates = (ops[0] as any).receiptFailureUpdates;
+        for (const field of [
+          'receipt',
+          'receiptLogEffectsProcessed',
+          'receiptLogEffectsIncompleteContracts',
+          'effects',
+          'wallets',
+          'fee'
+        ]) {
+          expect(receiptFailureUpdates.preserve.$set).not.to.have.property(field);
+        }
+        expect(receiptFailureUpdates.insertOrPreserve.$setOnInsert).to.deep.equal({
+          effects: tx.effects,
+          wallets: [],
+          fee: tx.fee
+        });
       });
 
       it('should expire token balance caches for fallback effects', async () => {
@@ -2336,12 +2352,14 @@ describe('Transaction Model', function() {
         await EVMTransactionStorage.expireBalanceCache([{
           updateOne: {
             filter: { chain: 'ETH', network: 'mainnet' },
-            update: [{ $set: { receiptRepairPending: { $literal: true } } }]
-          },
-          balanceCacheTx: {
-            from: missingReceiveTxFrom,
-            to: busdToken,
-            effects: [fallbackEffect]
+            update: {
+              $set: {
+                from: missingReceiveTxFrom,
+                to: busdToken,
+                effects: [fallbackEffect],
+                receiptRepairPending: true
+              }
+            }
           }
         }]);
 
@@ -2357,37 +2375,46 @@ describe('Transaction Model', function() {
       it('should preserve authoritative state but confirm pending rows with fallback data after a fetch failure', async () => {
         sandbox.stub(Config, 'chainConfig').returns({ leanTransactionStorage: false } as any);
         const persisted = new Map<string, any>();
-        const matches = (doc: any, filter: any) => Object.entries(filter).every(([key, value]) => doc[key] === value);
-        const REMOVE = Symbol('remove');
-        const evaluate = (expression: any, doc: any): any => {
-          if (expression === '$$REMOVE') {
-            return REMOVE;
+        const sameValue = (left: any, right: any) => left?.equals ? left.equals(right) : left === right;
+        const matches = (doc: any, filter: any) => Object.entries(filter).every(([key, value]: [string, any]) => {
+          if (value && typeof value === 'object' && Object.prototype.hasOwnProperty.call(value, '$exists')) {
+            return Object.prototype.hasOwnProperty.call(doc, key) === value.$exists;
           }
-          if (typeof expression === 'string' && expression.startsWith('$')) {
-            return doc[expression.slice(1)];
+          return sameValue(doc[key], value);
+        });
+        const hooks = { beforeUpdate: undefined as ((filter: any) => void) | undefined };
+        const updatesSeen = [] as any[];
+        const updateOne = async (filter: any, update: any, options: any = {}) => {
+          if (Array.isArray(update)) {
+            throw new Error('MongoDB 3.6 does not support update pipelines');
           }
-          if (!expression || typeof expression !== 'object' || Array.isArray(expression)) {
-            return expression;
+          updatesSeen.push(update);
+          hooks.beforeUpdate?.(filter);
+          let doc = [...persisted.values()].find(candidate => matches(candidate, filter));
+          let inserted = false;
+          if (!doc && options.upsert) {
+            doc = Object.fromEntries(
+              Object.entries(filter).filter(([, value]) => !value || typeof value !== 'object' || value instanceof ObjectId)
+            );
+            persisted.set(doc.txid, doc);
+            inserted = true;
           }
-          if (Object.prototype.hasOwnProperty.call(expression, '$literal')) {
-            return expression.$literal;
+          if (doc) {
+            if (inserted) {
+              Object.assign(doc, update.$setOnInsert || {});
+            }
+            Object.assign(doc, update.$set || {});
+            for (const field of Object.keys(update.$unset || {})) {
+              delete doc[field];
+            }
           }
-          if (expression.$type) {
-            const field = expression.$type.slice(1);
-            return Object.prototype.hasOwnProperty.call(doc, field) ? typeof doc[field] : 'missing';
-          }
-          if (expression.$eq) {
-            return evaluate(expression.$eq[0], doc) === evaluate(expression.$eq[1], doc);
-          }
-          if (expression.$ne) {
-            return evaluate(expression.$ne[0], doc) !== evaluate(expression.$ne[1], doc);
-          }
-          if (expression.$cond) {
-            return evaluate(expression.$cond[evaluate(expression.$cond[0], doc) ? 1 : 2], doc);
-          }
-          return expression;
+          return {
+            matchedCount: doc && !inserted ? 1 : 0,
+            upsertedCount: inserted ? 1 : 0,
+            upsertedId: inserted ? { _id: doc!._id } : undefined,
+            result: { n: doc ? 1 : 0, nModified: doc && !inserted ? 1 : 0 }
+          };
         };
-        const hooks = { beforeAtomicWrite: undefined as ((filter: any) => void) | undefined };
         const transactionCollection = {
           insertOne: async (doc: any) => {
             persisted.set(doc.txid, { ...doc });
@@ -2407,41 +2434,15 @@ describe('Transaction Model', function() {
             return cursor;
           },
           bulkWrite: async (operations: any[]) => {
-            for (const { updateOne } of operations) {
-              let doc = [...persisted.values()].find(candidate => matches(candidate, updateOne.filter));
-              let inserted = false;
-              if (!doc && updateOne.upsert) {
-                doc = { ...updateOne.filter };
-                persisted.set(doc.txid, doc);
-                inserted = true;
-              }
-              if (!doc) {
-                continue;
-              }
-              if (Array.isArray(updateOne.update)) {
-                hooks.beforeAtomicWrite?.(updateOne.filter);
-                for (const stage of updateOne.update) {
-                  const input = { ...doc };
-                  for (const [field, expression] of Object.entries(stage.$set || {})) {
-                    const value = evaluate(expression, input);
-                    if (value === REMOVE || value === undefined) {
-                      delete doc[field];
-                    } else {
-                      doc[field] = value;
-                    }
-                  }
-                }
-              } else {
-                if (inserted) {
-                  Object.assign(doc, updateOne.update.$setOnInsert || {});
-                }
-                Object.assign(doc, updateOne.update.$set || {});
-                for (const field of Object.keys(updateOne.update.$unset || {})) {
-                  delete doc[field];
-                }
-              }
+            for (const operation of operations) {
+              await updateOne(
+                operation.updateOne.filter,
+                operation.updateOne.update,
+                { upsert: operation.updateOne.upsert }
+              );
             }
           },
+          updateOne,
           findOne: async (filter: any) => [...persisted.values()].find(doc => matches(doc, filter)) || null,
           deleteMany: async (filter: any) => {
             for (const [txid, doc] of persisted) {
@@ -2566,10 +2567,11 @@ describe('Transaction Model', function() {
         const newTxid = newTx.txid.toLowerCase();
 
         const concurrentReceipt = { status: false, gasUsed: 10, effectiveGasPrice: 20, l1Fee: 50 };
-        hooks.beforeAtomicWrite = filter => {
-          if (filter.txid !== racingPendingTx.txid) {
+        hooks.beforeUpdate = filter => {
+          if (filter.txid !== racingPendingTx.txid || filter.receipt?.$exists !== false) {
             return;
           }
+          hooks.beforeUpdate = undefined;
           const doc = persisted.get(racingPendingTx.txid)!;
           Object.assign(doc, {
             receipt: concurrentReceipt,
@@ -2637,6 +2639,8 @@ describe('Transaction Model', function() {
           expect(inserted!.fee).to.equal(fallbackFee);
           expect(inserted!.receipt).to.equal(undefined);
           expect(inserted!.receiptRepairPending).to.equal(true);
+          expect(updatesSeen).not.to.be.empty;
+          expect(updatesSeen.every(update => !Array.isArray(update))).to.equal(true);
         } finally {
           await EVMTransactionStorage.collection.deleteMany({ txid: existingTx.txid, chain: 'ETH', network: 'mainnet' });
           await EVMTransactionStorage.collection.deleteMany({ txid: failedExistingTx.txid, chain: 'ETH', network: 'mainnet' });
