@@ -163,9 +163,9 @@ export type IEVMTransaction = ITransaction & {
   effects?: Effect[]; // Meant to replace abiType, internal, calls and data on stored txs
   receiptLogEffectsProcessed?: boolean;
   /**
-   * The most recent confirmed-block receipt fetch failed. Existing receipt-derived
-   * state remains the last-known authoritative snapshot, but reads/backfill should
-   * retry even when that snapshot contains a stripped receipt.
+   * Receipt repair has not reached a derived outcome. Existing receipt-derived state
+   * remains the last-known authoritative snapshot, but reads/backfill must fetch a
+   * fresh receipt before retrying even when stored logs are present.
    */
   receiptRepairPending?: boolean;
   /**

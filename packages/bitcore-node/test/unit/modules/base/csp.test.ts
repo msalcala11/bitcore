@@ -913,6 +913,47 @@ describe('BaseEVMStateProvider: populateReceipt', function() {
     expect(updateOne.called).to.equal(false);
   });
 
+  it('refetches after stored receipt effect derivation fails', async function() {
+    const updateOne = sandbox.stub().resolves();
+    sandbox.stub(EVMTransactionStorage, 'collection').get(() => ({ updateOne }));
+    const provider = new BaseEVMStateProvider('ETH');
+    const getReceipt = sandbox.stub(provider, 'getReceipt').resolves(receiptWithTransferLog() as any);
+    const parseLog = sandbox.stub(EVMTransactionStorage as any, '_parseErc20TransferLog').callThrough();
+    parseLog.onFirstCall().throws(new Error('stored receipt is malformed'));
+    const tx = {
+      _id: new ObjectId(),
+      txid,
+      chain: 'ETH',
+      network: 'mainnet',
+      from: sourceAddress,
+      to: busdToken,
+      value: 0,
+      gasPrice: 20,
+      gasLimit: 1500000,
+      nonce: 79903,
+      transactionIndex: 0,
+      receipt: receiptWithTransferLog(),
+      effects: []
+    } as any;
+
+    await provider.populateReceipt(tx);
+
+    expect(getReceipt.called).to.equal(false);
+    expect(tx.receipt.logs).to.be.an('array');
+    expect(tx.receiptRepairPending).to.equal(true);
+    expect(tx.receiptLogEffectsProcessed).to.equal(undefined);
+    expect(updateOne.firstCall.args[1].$set.receiptRepairPending).to.equal(true);
+
+    await provider.populateReceipt(tx);
+
+    expect(getReceipt.calledOnce).to.equal(true);
+    expect(tx.effects).to.deep.equal([expectedTransferEffect()]);
+    expect(tx.receipt.logs).to.equal(undefined);
+    expect(tx.receiptRepairPending).to.equal(undefined);
+    expect(tx.receiptLogEffectsProcessed).to.equal(true);
+    expect(updateOne.secondCall.args[1].$unset.receiptRepairPending).to.equal('');
+  });
+
   it('retries repair-pending receipts without erasing last-known failed state', async function() {
     const updateOne = sandbox.stub().resolves();
     sandbox.stub(EVMTransactionStorage, 'collection').get(() => ({ updateOne }));

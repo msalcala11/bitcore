@@ -2050,13 +2050,14 @@ describe('Transaction Model', function() {
 
         expect(update.outcome).to.deep.equal({ kind: 'not-derived', reason: 'effect-derivation-failed' });
         expect(tx.effects).to.deep.equal([originalEffect]);
+        expect((tx as any).receiptRepairPending).to.equal(true);
         expect((tx as any).receiptLogEffectsProcessed).to.equal(undefined);
         expect((tx as any).receiptLogEffectsIncompleteContracts).to.equal(undefined);
         expect(update.update.$unset).to.deep.equal({
-          receiptRepairPending: '',
           receiptLogEffectsProcessed: '',
           receiptLogEffectsIncompleteContracts: ''
         });
+        expect(update.update.$set.receiptRepairPending).to.equal(true);
         expect(update.update.$unset).not.to.have.property('receipt');
         expect(update.update.$set.receipt).to.exist;
         expect(update.update.$set.receipt.logs).to.deep.equal(tx.receipt.logs);
@@ -2285,8 +2286,8 @@ describe('Transaction Model', function() {
         const update: any = ops[0].updateOne.update;
         expect(update.$set.receipt.logs).to.deep.equal(tx.receipt.logs);
         expect(update.$set.calls).to.deep.equal(tx.calls);
+        expect(update.$set.receiptRepairPending).to.equal(true);
         expect(update.$unset).to.deep.equal({
-          receiptRepairPending: '',
           receiptLogEffectsProcessed: '',
           receiptLogEffectsIncompleteContracts: ''
         });

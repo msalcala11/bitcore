@@ -646,11 +646,9 @@ export class EVMTransactionModel extends BaseTransaction<IEVMTransaction> {
         delete tx.receiptLogEffectsIncompleteContracts;
       }
     } else {
-      if (result.outcome.reason === 'missing-logs') {
-        tx.receiptRepairPending = true;
-      } else {
-        delete tx.receiptRepairPending;
-      }
+      // Retrying the same stored inputs can reproduce a deterministic derivation
+      // failure forever. Every unresolved outcome requests a fresh receipt first.
+      tx.receiptRepairPending = true;
       delete tx.receiptLogEffectsProcessed;
       delete tx.receiptLogEffectsIncompleteContracts;
     }
@@ -734,11 +732,7 @@ export class EVMTransactionModel extends BaseTransaction<IEVMTransaction> {
         unset('receiptLogEffectsIncompleteContracts');
       }
     } else if (outcome?.kind === 'not-derived') {
-      if (outcome.reason === 'missing-logs') {
-        $set.receiptRepairPending = true;
-      } else {
-        unset('receiptRepairPending');
-      }
+      $set.receiptRepairPending = true;
       unset('receiptLogEffectsProcessed');
       unset('receiptLogEffectsIncompleteContracts');
     }
