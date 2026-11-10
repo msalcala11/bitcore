@@ -13,6 +13,7 @@ import { registerMaintenanceRoutes } from './routes/maintenance';
 import { createWalletLimiter } from './routes/middleware/createWalletLimiter';
 import { registerMoralisRoutes } from './routes/moralis';
 import { registerNotificationRoutes } from './routes/notifications';
+import { registerPriceAlertRoutes } from './routes/pricealerts';
 import { registerServiceRoutes } from './routes/services';
 import { createEstimateFeeLimiter, setupAppMiddleware } from './routes/setup';
 import { registerTransactionRoutes } from './routes/transactions';
@@ -52,6 +53,8 @@ export class ExpressApp {
       setPublicCache,
       checkNumberFormat
     } = createRouteHelpers(returnError);
+
+    registerPriceAlertRoutes(router, opts);
 
     registerWalletRoutes(router, {
       createWalletLimiter: createWalletLimiter(opts),

@@ -10,6 +10,7 @@ stop_program ()
   
 }
 
+stop_program pids/pricealertsservice.pid
 stop_program pids/bws.pid
 stop_program pids/fiatrateservice.pid
 stop_program pids/emailservice.pid

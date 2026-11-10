@@ -20,6 +20,7 @@ import {
 } from './model';
 import { TssKeyGenModel } from './model/tsskeygen';
 import { TssSigGenModel } from './model/tsssign';
+import { PRICE_ALERT_COLLECTIONS, PriceAlertStorage } from './pricealerts/storage';
 import type { ITssKeyMessageObject } from './model/tsskeygen';
 import type { ITssSigMessageObject } from './model/tsssign';
 import type { Db } from 'mongodb';
@@ -28,6 +29,7 @@ const $ = preconditions.singleton();
 
 const collections = {
   // Duplciated in helpers.. TODO
+  ...PRICE_ALERT_COLLECTIONS,
   WALLETS: 'wallets',
   TXS: 'txs',
   ADDRESSES: 'addresses',
@@ -66,12 +68,17 @@ export class Storage {
     this.db = opts.db;
   }
 
+  get priceAlerts(): PriceAlertStorage {
+    return new PriceAlertStorage(this.db);
+  }
+
   static createIndexes(db) {
     logger.info('Creating DB indexes');
     if (!db.collection) {
       logger.error('DB not ready: [storage.ts] no db.collection');
       return;
     }
+    PriceAlertStorage.createIndexes(db).catch(err => logger.error('Price alert index creation failed: %o', err));
     db.collection(collections.WALLETS).createIndex({
       id: 1
     });

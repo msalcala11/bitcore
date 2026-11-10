@@ -121,6 +121,20 @@ module.exports = {
     pushServerUrl: 'https://fcm.googleapis.com/fcm',
     authorizationKey: 'You_have_to_put_something_here'
   },
+  // Both switches are read at startup. See PRICE_ALERTS.md before activation.
+  priceAlertsOpts: {
+    enabled: false,
+    workerEnabled: false,
+    pollIntervalMs: 60000,
+    maxSourceAgeMs: 300000,
+    coinGeckoBatchSize: 100, // maximum 515
+    brazeTimeoutMs: 10000,
+    brazeConcurrency: 2,
+    maxEnabledRules: 50,
+    campaignId: '',
+    appleMessageVariationId: '',
+    androidMessageVariationId: ''
+  },
   fiatRateServiceOpts: {
     defaultProvider: 'BitPay',
     fetchInterval: 5 // in minutes
