@@ -5,6 +5,7 @@ import { Constants } from '../lib/common/constants';
 import { Defaults } from '../lib/common/defaults';
 import logger from '../lib/logger';
 import { Storage } from '../lib/storage';
+import type { PriceAlertAsset, ResolvedPriceAlertAsset } from '../lib/model/pricealert';
 import type { Request } from 'express';
 
 type CoinMarketStats = {
@@ -172,6 +173,31 @@ function isValidTokenAddressForPlatform(tokenAddress: string, platformId: string
   return Validation.validateAddress(chain, 'mainnet', tokenAddress);
 }
 
+// Shared local selector validation: disabling never needs a provider lookup.
+export function canonicalCoinGeckoAsset(query: Record<string, unknown>, ignoreTokenCoin = false): PriceAlertAsset {
+  const { coin, chain, tokenAddress } = parseCoinChainTokenAddress(
+    ignoreTokenCoin && query.tokenAddress ? { ...query, coin: undefined } : query
+  );
+  const sym = coin?.toLowerCase();
+  const platformId = normalizeChainSafe(chain);
+  if (chain && !tokenAddress) {
+    if (!platformId) throw badRequest('Unsupported chain');
+    throw badRequest('chain is only supported for token lookups; provide tokenAddress or omit chain for native coins');
+  }
+  if (tokenAddress) {
+    if (!platformId) throw badRequest('tokenAddress requires valid chain');
+    if (!isValidTokenAddressForPlatform(tokenAddress, platformId)) throw badRequest('Invalid tokenAddress');
+    const normalizedChain = CHAIN_BY_COINGECKO_PLATFORM_ID[platformId];
+    const address = normalizedChain === 'sol' ? tokenAddress : tokenAddress.toLowerCase();
+    return { assetKey: `token:${normalizedChain}:${address}`, chain: normalizedChain, tokenAddress: address,
+      ...(sym ? { coin: sym } : {}) };
+  }
+  if (!sym || !Object.prototype.hasOwnProperty.call(DEFAULT_COINS, sym)) {
+    throw badRequest('Unsupported coin. For token symbols, pass `chain` and `tokenAddress`.');
+  }
+  return { assetKey: `native:${sym}`, coin: sym };
+}
+
 export class CoinGeckoService {
   request: any = request;
   storage: Storage;
@@ -273,28 +299,18 @@ export class CoinGeckoService {
   }
 
   private async resolveCoinGeckoId(coin: string | undefined, chain?: unknown, tokenAddress?: string): Promise<string> {
+    return (await this.resolveMarket(coin, chain, tokenAddress)).id;
+  }
+
+  private async resolveMarket(coin: string | undefined, chain?: unknown, tokenAddress?: string): Promise<{ id: string; name?: string; symbol?: string }> {
+    const asset = canonicalCoinGeckoAsset({ coin, chain: first(chain), tokenAddress });
     const sym = (coin || '').trim().toLowerCase();
-    if (sym && sym.length > MAX_QUERY_PARAM_LENGTH) throw badRequest('Unsupported coin');
-
-    const chainRaw = first(chain);
-    const chainProvided = chainRaw !== undefined && chainRaw !== null && String(chainRaw).trim().length > 0;
-    const platformId = normalizeChainSafe(chainRaw);
-    const normalizedTokenAddress = tokenAddress?.trim();
-
-    // If chain is provided, tokenAddress is required for deterministic token resolution.
-    // Keep invalid-chain errors specific when chain validation fails.
-    if (chainProvided && !normalizedTokenAddress) {
-      if (!platformId) throw badRequest('Unsupported chain');
-      throw badRequest('chain is only supported for token lookups; provide tokenAddress or omit chain for native coins');
-    }
-
-    // If a token contract address is provided, require a valid chain and resolve via contract lookup.
-    if (normalizedTokenAddress) {
-      if (!platformId) throw badRequest('tokenAddress requires valid chain');
-      if (!isValidTokenAddressForPlatform(normalizedTokenAddress, platformId)) {
-        throw badRequest('Invalid tokenAddress');
-      }
-
+    if (sym.length > MAX_QUERY_PARAM_LENGTH) throw badRequest('Unsupported coin');
+    if (asset.tokenAddress) {
+      const platformId = normalizeChainSafe(asset.chain);
+      // Existing market/rate endpoints preserve the supplied contract spelling.
+      // Price-alert callers pass the canonical address before reaching this method.
+      const normalizedTokenAddress = tokenAddress.trim();
       const { API_KEY } = this.coinGeckoGetCredentials();
       const headers = this.coinGeckoGetHeaders(API_KEY);
       try {
@@ -318,7 +334,7 @@ export class CoinGeckoService {
         if (platformSignals.length > 0 && !platformSignals.includes(platformId)) {
           throw badRequest('tokenAddress does not match chain');
         }
-        return id;
+        return { id, name: body?.name, symbol: tokenSymbol };
       } catch (e: any) {
         if (e?.statusCode === 404) {
           throw badRequest('Unsupported tokenAddress');
@@ -330,11 +346,35 @@ export class CoinGeckoService {
     if (!sym) throw badRequest('Unsupported coin');
 
     const defaultId = DEFAULT_COINS[sym];
-    if (defaultId) return defaultId;
+    if (defaultId) return { id: defaultId };
 
     // Coin-only requests are intentionally restricted to DEFAULT_COINS.
     // Tokens must be requested with both chain + tokenAddress.
     throw badRequest('Unsupported coin. For token symbols, pass `chain` and `tokenAddress`.');
+  }
+
+  async resolvePriceAlertAsset(query: Record<string, unknown>): Promise<ResolvedPriceAlertAsset> {
+    const asset = canonicalCoinGeckoAsset(query);
+    const market = await this.resolveMarket(asset.coin, asset.chain, asset.tokenAddress);
+    const metadata = asset.tokenAddress ? market :
+      (await this.coinGeckoGetMarketStats({ params: { code: 'USD' }, query: { coin: asset.coin } }))[0];
+    if (typeof metadata?.name !== 'string' || !metadata.name.trim() ||
+        typeof metadata?.symbol !== 'string' || !metadata.symbol.trim()) {
+      throw badRequest('CoinGecko asset metadata unavailable');
+    }
+    const tokenAsset = { ...asset };
+    delete tokenAsset.coin;
+    return { ...(asset.tokenAddress ? tokenAsset : asset), providerId: market.id, name: metadata.name, symbol: metadata.symbol.toUpperCase() };
+  }
+
+  // Alert observations intentionally bypass withGlobalCache and its stale fallback.
+  async priceAlertPrices(ids: string[], codes: string[]): Promise<any> {
+    if (!ids.length || ids.length > 515) throw new Error('Invalid CoinGecko price batch');
+    const { API_KEY } = this.coinGeckoGetCredentials();
+    return this.coinGeckoGetJson(this.cgUrl('/v3/simple/price', {
+      ids: ids.join(','), vs_currencies: codes.map(code => code.toLowerCase()).join(','),
+      include_24hr_change: true, include_last_updated_at: true, precision: 'full'
+    }), this.coinGeckoGetHeaders(API_KEY));
   }
 
   private async fetchFiatRatesForId(id: string, vsCurrency: string, days: FiatRateDays): Promise<FiatRatePoint[]> {

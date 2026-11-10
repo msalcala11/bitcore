@@ -1,0 +1,25 @@
+{
+  "publicKeyCompressed": "02fb4b3a1b3f7adbd3c322c41d07452f0fedd0ded9c427dcf155f2924e3e30691a",
+  "publicKeyUncompressed": "04fb4b3a1b3f7adbd3c322c41d07452f0fedd0ded9c427dcf155f2924e3e30691a254ceedb2d032aa5be66bfc061f2c6c72747a6fbf6c3b128f2ad405b1126e2c8",
+  "sin": "TfLR8L7EVJ19TYRnpWkvuVPiNS9Xps71v9n",
+  "vectors": [
+    {
+      "request": "GET https://bws.example.com/bws/api/v1/pricealerts/",
+      "message": "get|/v1/pricealerts/|{}",
+      "signatureLowS": "304402204e6a1219fbae4f6e7e700aa776267960b28f1fa78e12e5baccab767f10b395530220014a58bea805ff71a4fff443d9cd09a1e656065b03005e241b8b9c0706950110",
+      "signatureHighS": "304502204e6a1219fbae4f6e7e700aa776267960b28f1fa78e12e5baccab767f10b39553022100feb5a74157fa008e5b000bbc2632f65cd458d68bac484217a446c285c9a14031"
+    },
+    {
+      "request": "DELETE https://bws.example.com/bws/api/v1/pricealerts/?coin=btc",
+      "message": "delete|/v1/pricealerts/?coin=btc|{}",
+      "signatureLowS": "30440220538d6d6136735a408cdf51e2134f43613c649c6920d6f9a2057fc41d0586355f02201c52da27c4f2b171deb425e3e73cc1aa6cd79f804fc27a5256286f3bba8a3ebf",
+      "signatureHighS": "30450220538d6d6136735a408cdf51e2134f43613c649c6920d6f9a2057fc41d0586355f022100e3ad25d83b0d4e8e214bda1c18c33e544dd73d665f8625e969a9ef5115ac0282"
+    },
+    {
+      "request": "PUT https://bws.example.com/bws/api/v1/pricealerts/?chain=eth&tokenAddress=0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48 with body {\"thresholdPct\":10,\"code\":\"USD\"}",
+      "message": "put|/v1/pricealerts/?chain=eth&tokenAddress=0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48|{\"thresholdPct\":10,\"code\":\"USD\"}",
+      "signatureLowS": "304402202f1b3d7d28ef794bba7889e3d68b0b81bb25446b4b878343148741ddb5fd5c7b022038f2e99d9be894109cc96da8ae021372d53fe59797c3284be11b7c88eba965db",
+      "signatureHighS": "304502202f1b3d7d28ef794bba7889e3d68b0b81bb25446b4b878343148741ddb5fd5c7b022100c70d166264176bef6336925751fdec8be56ef74f178577efdeb6e203e48cdb66"
+    }
+  ]
+}

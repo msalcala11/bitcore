@@ -336,6 +336,12 @@ export const Defaults = {
   SESSION_EXPIRATION: 1 * 60 * 60, // 1 hour to session expiration
 
   RateLimit: {
+    priceAlerts: {
+      windowMs: 10 * 60 * 1000,
+      max: 300,
+      delayMs: 0,
+      message: 'Too many price alert mutations; try again later'
+    },
     createWallet: {
       windowMs: 60 * 60 * 1000, // hour window
       delayAfter: 8, // begin slowing down responses after the 3rd request

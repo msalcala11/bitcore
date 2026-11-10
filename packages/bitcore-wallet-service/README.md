@@ -401,6 +401,10 @@ Returns:
 
 ### `/v1/txconfirmations/:txid`: Unsubscribe from transaction `txid` and no longer listen to its confirmation
 
+# App-owned Price Alerts
+
+See [PRICE_ALERTS.md](PRICE_ALERTS.md) for the app-key API, configuration, delivery contract, and activation requirements. The feature and its worker are off by default.
+
 # Push Notifications
 
 Recomended to complete config.js file:

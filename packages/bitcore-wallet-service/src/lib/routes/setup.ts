@@ -84,3 +84,7 @@ export function createEstimateFeeLimiter(opts) {
     next();
   };
 }
+
+export function createPriceAlertLimiter(opts) {
+  return opts.ignoreRateLimiter ? (_req, _res, next) => next() : new RateLimit(Defaults.RateLimit.priceAlerts);
+}

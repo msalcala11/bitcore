@@ -52,13 +52,14 @@ Configuration for all required modules can be specified in the "bitcoreWalletSer
 ```
 
 
-BWS is composed of 6 separate services
+BWS is composed of 7 separate services
 - **Bitcore Wallet Service**: bws.ts
 - **Message Broker**: messagebroker/messagebroker.ts
 - **Blockchain Monitor**: bcmonitor/bcmonitor.ts (This service talks to the Blockchain Explorer service configured under blockchainExplorerOpts - see Configure blockchain service below.)
 - **Email Service**: emailservice/emailservice.ts
 - **Push Notification Service**: pushnotificationservice/pushnotificationservice.ts
 - **Fiat Rate Service**: fiatrateservice/fiatrateservice.ts
+- **Price Alerts Service**: pricealertsservice/pricealertsservice.ts (off by default; see [PRICE_ALERTS.md](PRICE_ALERTS.md))
 
 ### Configure MongoDB
 

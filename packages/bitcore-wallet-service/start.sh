@@ -34,5 +34,6 @@ run_program ./ts_build/src/bcmonitor/bcmonitor.js pids/bcmonitor.pid logs/bcmoni
 run_program ./ts_build/src/emailservice/emailservice.js pids/emailservice.pid logs/emailservice.log
 run_program ./ts_build/src/pushnotificationsservice/pushnotificationsservice.js pids/pushnotificationsservice.pid logs/pushnotificationsservice.log
 run_program ./ts_build/src/fiatrateservice/fiatrateservice.js pids/fiatrateservice.pid logs/fiatrateservice.log
+run_program ./ts_build/src/pricealertsservice/pricealertsservice.js pids/pricealertsservice.pid logs/pricealertsservice.log
 run_program ./ts_build/src/bws.js pids/bws.pid logs/bws.log
 

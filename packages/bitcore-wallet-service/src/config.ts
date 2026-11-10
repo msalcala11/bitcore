@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import _ from 'lodash';
 import { logger } from './lib/logger';
+import { PRICE_ALERT_DEFAULTS } from './lib/pricealerts/config';
 
 const Config = (): any => {
   const defaultConfig = {
@@ -161,6 +162,7 @@ const Config = (): any => {
       authorizationKey: 'You_have_to_put_something_here',
       authorizationKeyBraze: 'You_have_to_put_something_here'
     },
+    priceAlertsOpts: { ...PRICE_ALERT_DEFAULTS },
     fiatRateServiceOpts: {
       defaultProvider: 'BitPay',
       fetchInterval: 5 // in minutes

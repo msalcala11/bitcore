@@ -88,6 +88,8 @@ class Helpers {
       SESSIONS: 'sessions',
       PUSH_NOTIFICATION_SUBS: 'push_notification_subs',
       TX_CONFIRMATION_SUBS: 'tx_confirmation_subs',
+      PRICE_ALERT_REGISTRATIONS: 'price_alert_registrations',
+      PRICE_ALERT_RULES: 'price_alert_rules',
       LOCKS: 'locks'
     };
 
