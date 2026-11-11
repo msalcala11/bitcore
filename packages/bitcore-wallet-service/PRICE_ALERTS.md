@@ -94,7 +94,8 @@ IPs. `ignoreRateLimiter` retains its existing development/test meaning.
 Native selectors omit chain/address: `coin=btc`, `coin=pol`, etc. Current resolver
 natives are btc, bch, doge, eth, ltc, pol, sol, xrp and arc; arc uses the usd-coin market.
 Tokens use `chain=eth&tokenAddress=<contract>`; chains are eth, matic (alias pol), arb,
-base, op, arc and sol. Optional token `coin` on PUT must match the provider's symbol.
+base, op, arc and sol. Optional token `coin` must match the provider's symbol when
+creating a rule; on an existing rule it receives local selector validation only.
 DELETE ignores token `coin`, validates/normalizes locally, and never calls CoinGecko.
 Client-selected provider IDs and client-supplied names are not accepted.
 
@@ -112,7 +113,10 @@ cached market stats **in USD**, including for COP rules; only observations use t
 rule's currency. Metadata is captured at creation and retained on subsequent edits.
 
 Saving replaces the configuration of one asset rule without changing cooldowns.
-Identical retries do not change `updatedAt`. The default enabled-rule cap is 50 per
+Editing, repeating a save, or re-enabling an existing rule never calls CoinGecko;
+the locally validated selectors and stored provider ID, name and symbol are reused.
+Only new rules require successful provider resolution. Identical retries do not
+change `updatedAt`. The default enabled-rule cap is 50 per
 set, applied when adding/re-enabling; small concurrent overshoots are accepted. This
 is an abuse bound, not the app's 20-asset watchlist limit. BWS has no watchlist.
 
@@ -156,8 +160,18 @@ after the worker's read may not be; nothing recalls an already sent/accepted req
 
 ## Worker, storage and notification contract
 
-The worker has one nonoverlapping loop, waiting `pollIntervalMs` after each completed
-poll. It discovers distinct enabled market/currency pairs, polls [CoinGecko `/simple/price`](https://docs.coingecko.com/reference/simple-price) with
+The worker has one nonoverlapping loop. Normally the next poll starts at the previous
+poll's start plus `pollIntervalMs`, or immediately if that time has already passed.
+After a database failure (including market discovery, a scan error, or any error
+caught by the poll-level handler), it waits a full interval from the end of the poll.
+A disabled worker or a poll with no enabled markets waits a normal full interval
+and does not spin. Provider 429s, timeouts and stale-at-acquisition data do not cause
+database-error backoff.
+
+It discovers distinct enabled market/currency pairs and rotates the starting market
+one position each poll, before deriving provider IDs and batches. This changes both
+which markets are fetched first and which get the first turn. It polls
+[CoinGecko `/simple/price`](https://docs.coingecko.com/reference/simple-price) with
 all needed currencies, at most 515 IDs per batch (default 100), and at most two
 requests in flight. It reuses configured CoinGecko URL and Pro credentials, with a
 15-second provider timeout and no in-poll retry or stale-cache fallback.
@@ -170,12 +184,45 @@ aggregated in operational logs per poll.
 
 Eligible rules page by ascending `_id`, 100 at a time, reading registrations per
 page. Paused, push-ineligible or missing registrations receive no reservation. The
-worker rechecks freshness before every reservation. A scan permits at most 1,000
-successful reservations per market/currency per poll; skipped/conflicting candidates
-do not count. In-memory cursors continue early-stopped scans and wrap around without
-skipping the next unprocessed candidate. There is no persisted backlog. One worker is
-normally enough; additional workers coordinate only through atomic reservations and
-each independently multiplies provider traffic.
+worker rechecks freshness before every reservation. Each market/currency turn permits
+at most 1,000 successful reservations; skipped/conflicting candidates do not count.
+Every qualifying market gets a first turn across **all** provider batches before
+continuations begin. Then capped markets take further turns in the same order,
+reusing their original observations without any provider requests. A market leaves
+the continuation list when exhausted or stale; capped markets keep taking turns.
+Any scan storage error ends the entire poll, including all remaining first turns
+and continuations. Already acknowledged reservations still get their send attempt.
+Braze rejection, timeout and network-error outcomes keep their existing best-effort
+behaviour and do not end the poll.
+
+> Within one worker's poll, all reservations for a given market/currency pair use the same qualifying observation, including every continuation turn. Freshness is checked before each reservation.
+
+This does not promise that every qualifying subscriber is processed on one
+observation: expiry, cooldowns, changed preferences, failed sends and independently
+polling workers remain exceptions. In-memory cursors advance per rule processed,
+continue early-stopped scans and wrap without skipping the next unprocessed candidate.
+Only those positions and the rotation counter persist between polls; continuation
+observations and traversal state do not. There is no persisted backlog. One worker
+is normally enough; additional workers coordinate only through atomic reservations
+and each independently multiplies provider traffic.
+
+Accepted scheduling limits:
+
+- Reservations are made one rule at a time. A market's turn delays the others for
+  as long as its reservations and sends take; sending remains at the end of a turn.
+- A long cohort of paused, unregistered or push-ineligible rules is scanned in one
+  turn. Rotation prevents the same market from always losing, but does not remove
+  that delay within a poll. Skipped rules may be revisited on later turns or the final
+  traversal, and concurrent configuration changes can add visits.
+- A capped market can lose its remaining freshness while other markets take their
+  first turns. Its continuation stops as stale and resumes on a later observation
+  from the saved position.
+- Expiry stops new reservations, but already-reserved alerts still get their send
+  attempt. Source expiry is not a hard limit on poll duration.
+- During a long poll, new price movements are detected at the next acquisition;
+  a movement that reverses before then can be missed.
+- A process kill mid-turn can leave up to 1,000 reserved alerts unsent for the market
+  in progress, with their cooldowns still consumed.
 
 Two collections are added: `price_alert_registrations` (`_id` = owner) and
 `price_alert_rules` (`_id` = SHA-256 of JSON `[alertSetId, assetKey]`). Deterministic IDs
@@ -248,9 +295,17 @@ abrupt termination remains acceptable: no shutdown handler is needed for correct
 
 Deployment order:
 
-1. To enable, enable and verify the API on **every serving instance**, then start workers.
+1. To enable, enable and verify the API on **every serving instance**, confirm the Braze URL and key, then start workers.
 2. To disable, stop **every worker**, confirm every worker process has exited, then disable the API.
 3. To pause sending while preserving management, stop workers and leave the API enabled.
+
+When both switches are on, the worker checks `pushNotificationsOpts.pushServerUrlBraze`
+for an absolute HTTP/HTTPS URL and `authorizationKeyBraze` for a nonempty string that
+is not the shipped placeholder. Invalid settings produce a setting-specific error
+without the key value and a non-zero exit before storage connects or polling begins.
+With either switch off, validation is skipped and the worker stays idle. This is
+only a local settings check: it makes no network call or test push and cannot prove
+that a plausible key works or has the necessary permissions.
 
 A notification already accepted by Braze may still arrive. Before production
 activation, someone at BitPay who owns the risk must accept the unverified-destination

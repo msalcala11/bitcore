@@ -164,7 +164,7 @@ describe('Price alert Braze delivery', () => {
       expect(opts.body.messages.android_push.message_variation_id).to.equal('android');
       setImmediate(() => { inflight--; cb(null, { statusCode: 201 }, { message: 'success', dispatch_id: 'dispatch' }); });
     });
-    sender.request = http;
+    sender.request = http as unknown as typeof sender.request;
     await sender.send(Array.from({ length: 121 }, (_, i) => ({ rule, observation, externalUserId: 'recipient' + i })));
     expect(http.getCalls().map(call => call.args[0].body.external_user_ids.length)).to.deep.equal([50, 50, 21]);
     expect(max).to.equal(2);
@@ -175,7 +175,7 @@ describe('Price alert Braze delivery', () => {
       [null, { statusCode: 400 }, { message: 'bad request' }, 'rejected'], [null, { statusCode: 200 }, { message: 'success', errors: ['invalid'] }, 'rejected'],
       [{ code: 'ETIMEDOUT' }, undefined, undefined, 'unknown'], [{ code: 'ECONNRESET' }, undefined, undefined, 'unknown']]) {
       const sender = new PriceAlertDelivery(priceAlertOptions(), {});
-      const http = sinon.stub().callsFake((_opts, cb) => cb(err, response, body)); sender.request = http;
+      const http = sinon.stub().callsFake((_opts, cb) => cb(err, response, body)); sender.request = http as unknown as typeof sender.request;
       await sender.send([{ rule, observation, externalUserId: 'recipient' }]);
       expect(http.callCount).to.equal(1); expect(log.lastCall.args[1].outcome).to.equal(outcome);
     }
@@ -183,9 +183,10 @@ describe('Price alert Braze delivery', () => {
   it('leaves the wallet sender request and callback semantics unchanged', () => {
     const sender = new PushNotificationsService();
     sender.pushServerUrlBraze = 'https://braze.invalid'; sender.authorizationKeyBraze = 'key';
-    sender.request = sinon.stub().callsFake((_opts, cb) => cb(null, { statusCode: 500 }));
+    const http = sinon.stub().callsFake((_opts, cb) => cb(null, { statusCode: 500 }));
+    sender.request = http as unknown as typeof sender.request;
     const callback = sinon.spy(); sender._makeBrazeRequest({ messages: {} }, callback);
-    const opts = (sender.request as sinon.SinonStub).firstCall.args[0];
+    const opts = http.firstCall.args[0];
     expect(opts).not.to.have.property('timeout');
     expect(opts).not.to.have.property('followRedirect');
     expect(callback.firstCall.args).to.deep.equal([null, { statusCode: 500 }]);
