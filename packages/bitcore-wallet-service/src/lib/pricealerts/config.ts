@@ -14,6 +14,21 @@ export const PRICE_ALERT_DEFAULTS = {
 
 export type PriceAlertOptions = typeof PRICE_ALERT_DEFAULTS;
 
+export function validatePriceAlertBrazeSettings(settings?: { pushServerUrlBraze?: unknown; authorizationKeyBraze?: unknown }): void {
+  try {
+    const url = settings?.pushServerUrlBraze;
+    if (typeof url !== 'string' || !/^https?:\/\//i.test(url)) throw new Error();
+    const parsed = new URL(url);
+    if (!['http:', 'https:'].includes(parsed.protocol) || !parsed.hostname) throw new Error();
+  } catch {
+    throw new Error('pushNotificationsOpts.pushServerUrlBraze must be an absolute HTTP or HTTPS URL');
+  }
+  const key = settings?.authorizationKeyBraze;
+  if (typeof key !== 'string' || !key.trim() || key.trim().toLowerCase() === 'you_have_to_put_something_here') {
+    throw new Error('pushNotificationsOpts.authorizationKeyBraze must be a nonempty, non-placeholder string');
+  }
+}
+
 export function priceAlertOptions(opts: Partial<PriceAlertOptions> = {}): PriceAlertOptions {
   const result = { ...PRICE_ALERT_DEFAULTS, ...opts };
   for (const key of ['enabled', 'workerEnabled']) {

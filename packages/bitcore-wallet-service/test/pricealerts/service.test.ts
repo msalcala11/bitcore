@@ -37,6 +37,7 @@ const asset = { assetKey: 'native:btc', coin: 'btc', providerId: 'bitcoin', name
 const registerBody = { externalUserId: 'braze-profile', priceAlertsEnabled: true, pushEnabled: true };
 const now = 1800000000000;
 const market = (change = 10.2) => ({ bitcoin: { usd: 100, usd_24h_change: change, last_updated_at: Date.now() / 1000 } });
+const originalTimers = { setTimeout: global.setTimeout, clearTimeout: global.clearTimeout };
 
 describe('Price alert app signing', () => {
   for (const vector of fixture.vectors) {
@@ -105,8 +106,12 @@ describe('Price alert API, persistence and worker (Mongo)', function() {
   });
   afterEach(() => {
     config.priceAlertsOpts = previousOptions;
-    clock.restore();
+    // Restore timer spies before the clock; otherwise a spy can reinstall the
+    // fake setTimeout after the clock has already restored the real timer.
     sinon.restore();
+    clock.restore();
+    expect(global.setTimeout).to.equal(originalTimers.setTimeout);
+    expect(global.clearTimeout).to.equal(originalTimers.clearTimeout);
   });
   after(async () => { if (client) await client.close(); });
 
@@ -241,6 +246,46 @@ describe('Price alert API, persistence and worker (Mongo)', function() {
     expect(final.nextEligibleAt).to.equal(now + PRICE_ALERT_COOLDOWN_MS);
     expect(final.code).to.equal('EUR');
     expect(await db.reserve(final, observation(10, 'EUR'), Date.now())).to.equal(false);
+  });
+  for (const chosen of [asset, {
+    assetKey: 'token:eth:0x' + 'ab'.repeat(20), chain: 'eth', tokenAddress: '0x' + 'ab'.repeat(20),
+    providerId: 'stored-token', name: 'Stored Token', symbol: 'TOKEN'
+  }]) {
+    it(`edits, retries and re-enables ${chosen.assetKey} without an available resolver`, async () => {
+      await register();
+      const first = await rule(owner(), 'USD', 5, chosen as any);
+      await db.reserve(first, observation(), now);
+      resolve.resetHistory(); resolve.rejects(new Error('resolver unavailable'));
+      const query = 'tokenAddress' in chosen
+        ? { chain: chosen.chain, tokenAddress: chosen.tokenAddress, coin: 'locally-valid-symbol' }
+        : { coin: chosen.coin };
+      clock.tick(1000);
+      await service.save(owner(), query, { thresholdPct: 10, code: 'EUR' });
+      const edited = await db.getRule(owner(), chosen.assetKey);
+      expect(edited.updatedAt).to.equal(now + 1000);
+      expect(edited).to.include({ thresholdPct: 10, code: 'EUR', providerId: chosen.providerId, name: chosen.name, symbol: chosen.symbol });
+      clock.tick(1000);
+      await service.save(owner(), query, { thresholdPct: 10, code: 'EUR' });
+      expect(await db.getRule(owner(), chosen.assetKey)).to.deep.equal(edited);
+      await service.disable(owner(), query);
+      await service.save(owner(), query, { thresholdPct: 15, code: 'COP' });
+      const enabled = await db.getRule(owner(), chosen.assetKey);
+      expect(enabled).to.include({ enabled: true, thresholdPct: 15, code: 'COP', nextEligibleAt: now + PRICE_ALERT_COOLDOWN_MS });
+      if ('tokenAddress' in chosen) expect(enabled).not.to.have.property('coin');
+      expect(resolve.called).to.equal(false);
+    });
+  }
+  it('still requires successful provider resolution for a new rule', async () => {
+    await register();
+    resolve.rejects(new Error('resolver unavailable'));
+    try {
+      await service.save(owner(), { coin: 'btc' }, { thresholdPct: 10, code: 'USD' });
+      throw new Error('Expected provider failure');
+    } catch (err) {
+      expect(err.message).to.equal('resolver unavailable');
+    }
+    expect(resolve.callCount).to.equal(1);
+    expect(await db.getRule(owner(), asset.assetKey)).to.equal(null);
   });
   it('disables locally with aliases, equivalent EVM case and ignored token coin', async () => {
     await register();
@@ -388,13 +433,14 @@ describe('Price alert API, persistence and worker (Mongo)', function() {
       expect(collection.updateOne.firstCall.args.length).to.equal(2); // no w override
     }
   });
-  it('continues past paused prefixes and reaches rules beyond a reservation bound', async () => {
+  it('continues past paused prefixes and reaches rules beyond a reservation bound in one poll', async () => {
     for (let i = 0; i < 9; i++) { await register('owner' + i); await rule('owner' + i); }
     const sorted = await db.candidates(observation(), now, undefined, undefined, 20);
     for (const item of sorted.slice(0, 6)) await db.saveRegistration(item.alertSetId, { priceAlertsEnabled: false });
     const w = worker(); w.pageSize = 2; w.maxReservationsPerMarket = 1;
-    await w.poll(); await w.poll(); await w.poll();
+    await w.poll();
     expect(sent.map(item => item.rule._id)).to.deep.equal(sorted.slice(6).map(item => item._id));
+    expect(prices.callCount).to.equal(1);
   });
   it('retains the unprocessed next candidate when data goes stale between pages', async () => {
     for (let i = 0; i < 5; i++) { await register('owner' + i); await rule('owner' + i); }
@@ -513,6 +559,238 @@ describe('Price alert API, persistence and worker (Mongo)', function() {
     await w.poll(); await w.poll();
     expect(http.callCount).to.equal(1);
     expect((await db.getRule(owner(), asset.assetKey)).nextEligibleAt).to.equal(now + PRICE_ALERT_COOLDOWN_MS);
+  });
+
+  it('uses one qualifying observation for more than two caps worth of rules', async () => {
+    for (let i = 0; i < 7; i++) { await register('owner' + i); await rule('owner' + i); }
+    prices.onFirstCall().resolves(market(10.2)); prices.onSecondCall().resolves(market(0));
+    const w = worker(); w.pageSize = 3; w.maxReservationsPerMarket = 2;
+    expect(await w.poll()).to.equal('complete');
+    expect(sent.length).to.equal(7);
+    expect(new Set(sent.map(item => item.rule._id)).size).to.equal(7);
+    expect(new Set(sent.map(item => item.observation.id)).size).to.equal(1);
+    expect(sent.every(item => item.observation.observedAt === now && item.observation.change24hPct === 10.2)).to.equal(true);
+    expect(prices.callCount).to.equal(1);
+    await w.poll(); expect(sent.length).to.equal(7);
+  });
+
+  it('competing workers taking continuation turns still send each reserved rule only once', async () => {
+    for (let i = 0; i < 7; i++) { await register('owner' + i); await rule('owner' + i); }
+    const workers = [worker(), worker(), worker()];
+    for (const w of workers) { w.pageSize = 3; w.maxReservationsPerMarket = 2; }
+    await Promise.all(workers.map(w => w.poll()));
+    expect(sent.length).to.equal(7);
+    expect(new Set(sent.map(item => item.rule._id)).size).to.equal(7);
+    await workers[0].poll();
+    expect(sent.length).to.equal(7);
+    for (let i = 0; i < 7; i++) {
+      expect((await db.getRule('owner' + i, asset.assetKey)).nextEligibleAt).to.equal(now + PRICE_ALERT_COOLDOWN_MS);
+    }
+  });
+
+  it('gives all provider batches their first round before any continuation', async () => {
+    for (const id of ['a', 'b', 'c', 'd', 'e']) {
+      for (let i = 0; i < (id === 'a' ? 3 : 1); i++) {
+        await register(id + i); await rule(id + i, 'USD', 5, { ...asset, providerId: id });
+      }
+    }
+    prices.callsFake(async ids => Object.fromEntries(ids.map(id => [id, market().bitcoin])));
+    const w = new PriceAlertWorker(db, provider, delivery, priceAlertOptions({ ...options(), coinGeckoBatchSize: 1 }));
+    w.pageSize = 2; w.maxReservationsPerMarket = 1;
+    await w.poll();
+    expect(sent.map(item => item.observation.providerId)).to.deep.equal(['a', 'b', 'c', 'd', 'e', 'a', 'a']);
+    expect(prices.getCalls().map(call => call.args[0])).to.deep.equal([['a'], ['b'], ['c'], ['d'], ['e']]);
+  });
+
+  it('keeps separate observations for currencies sharing a provider market', async () => {
+    for (const code of ['USD', 'EUR']) for (let i = 0; i < 3; i++) {
+      await register(code + i); await rule(code + i, code);
+    }
+    prices.resolves({ bitcoin: { usd: 100, usd_24h_change: 6, eur: 90, eur_24h_change: -7, last_updated_at: now / 1000 } });
+    const w = worker(); w.maxReservationsPerMarket = 1;
+    await w.poll();
+    expect(sent.map(item => item.rule.code)).to.deep.equal(['EUR', 'USD', 'EUR', 'USD', 'EUR', 'USD']);
+    for (const code of ['USD', 'EUR']) {
+      const items = sent.filter(item => item.rule.code === code);
+      expect(new Set(items.map(item => item.observation.id)).size).to.equal(1);
+      expect(items.every(item => item.observation.change24hPct === (code === 'USD' ? 6 : -7))).to.equal(true);
+    }
+    expect(new Set(sent.map(item => item.observation.id)).size).to.equal(2);
+    expect(prices.callCount).to.equal(1);
+  });
+
+  it('rotates acquisition and first turns past a paused cohort that consumes freshness', async () => {
+    for (let i = 0; i < 6; i++) { await register('paused' + i, { priceAlertsEnabled: false }); await rule('paused' + i); }
+    const eth = { ...asset, assetKey: 'native:eth', coin: 'eth', providerId: 'ethereum' };
+    await register('eth'); await rule('eth', 'USD', 5, eth);
+    prices.callsFake(async () => ({ ...market(), ethereum: market().bitcoin }));
+    const original = db.registrationsForRules.bind(db);
+    sinon.stub(db, 'registrationsForRules').callsFake(async rules => {
+      if (rules[0].providerId === 'bitcoin') clock.tick(100001);
+      return original(rules);
+    });
+    const candidates = sinon.spy(db, 'candidates');
+    const w = worker(); w.pageSize = 2; w.maxReservationsPerMarket = 1;
+    await w.poll();
+    expect(sent.length).to.equal(0);
+    expect((await db.getRule('eth', eth.assetKey)).nextEligibleAt).to.equal(undefined);
+    expect(candidates.getCalls().every(call => call.args[0].providerId === 'bitcoin')).to.equal(true);
+    await w.poll();
+    expect(sent.map(item => item.rule.alertSetId)).to.deep.equal(['eth']);
+    expect(prices.firstCall.args[0]).to.deep.equal(['bitcoin', 'ethereum']);
+    expect(prices.secondCall.args[0]).to.deep.equal(['ethereum', 'bitcoin']);
+  });
+
+  it('stops stale continuations and resumes at the saved position on a fresh poll', async () => {
+    for (let i = 0; i < 5; i++) { await register('owner' + i); await rule('owner' + i); }
+    const sorted = await db.candidates(observation(), now, undefined, undefined, 20);
+    await register('eth'); await rule('eth', 'USD', 5, { ...asset, providerId: 'ethereum' });
+    prices.callsFake(async () => ({ ...market(), ethereum: market().bitcoin }));
+    delivery.send.callsFake(async items => {
+      sent.push(...items);
+      if (items.some(item => item.observation.providerId === 'ethereum')) clock.tick(300001);
+    });
+    const candidates = sinon.spy(db, 'candidates');
+    const w = worker(); w.pageSize = 3; w.maxReservationsPerMarket = 2;
+    await w.poll();
+    expect(sent.map(item => item.rule._id).slice(0, 2)).to.deep.equal(sorted.slice(0, 2).map(item => item._id));
+    expect(sent.length).to.equal(3);
+    for (const item of sorted.slice(2)) expect((await db.getRule(item.alertSetId, asset.assetKey)).nextEligibleAt).to.equal(undefined);
+    candidates.resetHistory();
+    await w.poll();
+    expect(sent.length).to.equal(6);
+    expect(new Set(sent.map(item => item.rule._id)).size).to.equal(6);
+    const resumed = candidates.getCalls().find(call => call.args[0].providerId === 'bitcoin');
+    expect(resumed.args[2]).to.equal(sorted[1]._id);
+    expect(resumed.args[0].observedAt).to.equal(now + 300001);
+    expect(sent[3].observation.id).not.to.equal(sent[0].observation.id);
+    expect(prices.callCount).to.equal(2);
+  });
+
+  it('handles a cap within a page, paused boundaries and wraparound without skipping or duplicating', async () => {
+    for (let i = 0; i < 8; i++) { await register('owner' + i); await rule('owner' + i); }
+    const sorted = await db.candidates(observation(), now, undefined, undefined, 20);
+    for (const index of [1, 3, 6]) await db.saveRegistration(sorted[index].alertSetId, { priceAlertsEnabled: false });
+    const w = worker(); w.pageSize = 4; w.maxReservationsPerMarket = 2;
+    (w as any).positions.set('bitcoin:USD', sorted[6]._id);
+    expect(await w.poll()).to.equal('complete');
+    expect(sent.map(item => item.rule._id)).to.deep.equal([7, 0, 2, 4, 5].map(index => sorted[index]._id));
+    for (const index of [1, 3, 6]) expect((await db.getRule(sorted[index].alertSetId, asset.assetKey)).nextEligibleAt).to.equal(undefined);
+    expect(prices.callCount).to.equal(1);
+  });
+
+  describe('poll scheduling', () => {
+    const useTimerClock = () => {
+      clock.restore();
+      clock = sinon.useFakeTimers({ now, toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+      return sinon.spy(global, 'setTimeout');
+    };
+
+    for (const duration of [250, 1200]) {
+      it(`waits only the remaining interval after a ${duration}ms poll and never overlaps`, async () => {
+        await register(); await rule();
+        const timer = useTimerClock();
+        prices.callsFake(async () => { clock.tick(duration); return market(); });
+        const w = new PriceAlertWorker(db, provider, delivery, priceAlertOptions({ ...options(), pollIntervalMs: 1000 }));
+        const poll = sinon.spy(w, 'poll');
+        try {
+          w.start();
+          expect(await poll.firstCall.returnValue).to.equal('complete');
+          const delay = Math.max(0, 1000 - duration);
+          expect(timer.lastCall.args[1]).to.equal(delay);
+          expect(poll.callCount).to.equal(1);
+          if (delay) { clock.tick(delay - 1); expect(poll.callCount).to.equal(1); clock.tick(1); }
+          else clock.tick(0);
+          expect(poll.callCount).to.equal(2);
+          await poll.secondCall.returnValue;
+          expect(sent.length).to.equal(1);
+        } finally { w.stop(); }
+      });
+    }
+
+    for (const failure of ['429', 'timeout', 'stale']) {
+      it(`does not apply database backoff to ${failure} provider data`, async () => {
+        await register(); await rule();
+        const timer = useTimerClock();
+        prices.callsFake(async () => {
+          const original = market(); clock.tick(2000);
+          if (failure === '429') throw { statusCode: 429 };
+          if (failure === 'timeout') throw { code: 'ETIMEDOUT' };
+          return original;
+        });
+        const w = new PriceAlertWorker(db, provider, delivery, priceAlertOptions({ ...options(), pollIntervalMs: 1000, maxSourceAgeMs: 100 }));
+        const poll = sinon.spy(w, 'poll');
+        try {
+          w.start(); expect(await poll.firstCall.returnValue).to.equal('complete');
+          expect(timer.lastCall.args[1]).to.equal(0);
+          expect(sent.length).to.equal(0);
+        } finally { w.stop(); }
+      });
+    }
+
+    for (const switches of [{ enabled: true, workerEnabled: true }, { enabled: false, workerEnabled: true }, { enabled: true, workerEnabled: false }]) {
+      it(`waits a full interval when idle with switches ${JSON.stringify(switches)}`, async () => {
+        const timer = useTimerClock();
+        const markets = sinon.stub(db, 'markets').callsFake(async () => { clock.tick(2000); return []; });
+        const w = new PriceAlertWorker(db, provider, delivery, priceAlertOptions({ ...switches, pollIntervalMs: 1000 }));
+        const poll = sinon.spy(w, 'poll');
+        try {
+          w.start(); expect(await poll.firstCall.returnValue).to.equal('idle');
+          expect(timer.lastCall.args[1]).to.equal(1000);
+          clock.tick(999); expect(poll.callCount).to.equal(1);
+          clock.tick(1); expect(poll.callCount).to.equal(2);
+          await poll.secondCall.returnValue;
+          expect(markets.callCount).to.equal(switches.enabled && switches.workerEnabled ? 2 : 0);
+          expect(prices.called).to.equal(false);
+        } finally { w.stop(); }
+      });
+    }
+
+    it('waits a full interval after a market-discovery failure without reserving anything', async () => {
+      await register(); await rule();
+      const timer = useTimerClock();
+      const markets = sinon.stub(db, 'markets');
+      markets.onFirstCall().callsFake(async () => { clock.tick(1200); throw new Error('discovery failed'); });
+      markets.onSecondCall().resolves([]);
+      const reserve = sinon.spy(db, 'reserve');
+      const w = new PriceAlertWorker(db, provider, delivery, priceAlertOptions({ ...options(), pollIntervalMs: 1000 }));
+      const poll = sinon.spy(w, 'poll');
+      try {
+        w.start(); expect(await poll.firstCall.returnValue).to.equal('error');
+        expect(timer.lastCall.args[1]).to.equal(1000);
+        clock.tick(999); expect(poll.callCount).to.equal(1);
+        clock.tick(1); await poll.secondCall.returnValue;
+        expect(markets.callCount).to.equal(2);
+        expect(reserve.called).to.equal(false); expect(sent.length).to.equal(0);
+      } finally { w.stop(); }
+    });
+
+    it('stops all markets on a continuation error, sends acknowledged reservations and backs off', async () => {
+      for (const id of ['bitcoin', 'zeta']) for (let i = 0; i < 4; i++) {
+        await register(id + i); await rule(id + i, 'USD', 5, { ...asset, providerId: id });
+      }
+      const timer = useTimerClock();
+      prices.callsFake(async () => ({ ...market(), zeta: market().bitcoin }));
+      const original = db.reserve.bind(db);
+      let count = 0;
+      const reserve = sinon.stub(db, 'reserve').callsFake(async (...args) => {
+        if (++count === 6) { clock.tick(1200); throw new Error('continuation write failed'); }
+        return original(...args);
+      });
+      const w = new PriceAlertWorker(db, provider, delivery, priceAlertOptions({ ...options(), pollIntervalMs: 1000 }));
+      w.pageSize = 3; w.maxReservationsPerMarket = 2;
+      const poll = sinon.spy(w, 'poll');
+      try {
+        w.start(); expect(await poll.firstCall.returnValue).to.equal('error');
+        expect(reserve.callCount).to.equal(6);
+        expect(sent.map(item => item.observation.providerId)).to.deep.equal(['bitcoin', 'bitcoin', 'zeta', 'zeta', 'bitcoin']);
+        expect(timer.lastCall.args[1]).to.equal(1000);
+        clock.tick(999); expect(poll.callCount).to.equal(1);
+        clock.tick(1); await poll.secondCall.returnValue;
+        expect(sent.length).to.equal(8);
+        expect(new Set(sent.map(item => item.rule._id)).size).to.equal(8);
+      } finally { w.stop(); }
+    });
   });
 });
 

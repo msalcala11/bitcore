@@ -72,11 +72,10 @@ export class PriceAlertService {
     if (!current?.enabled && await this.storage.countEnabledRules(ownerId) >= this.options.maxEnabledRules) {
       throw new ClientError('PRICE_ALERTS_LIMIT', 'Maximum enabled price alerts reached');
     }
-    const asset = await this.provider.resolvePriceAlertAsset(query);
     // Metadata is captured at creation, not silently refreshed on identical retries.
     const storedAsset = current ? {
       ...selector, providerId: current.providerId, name: current.name, symbol: current.symbol
-    } : asset;
+    } : await this.provider.resolvePriceAlertAsset(query);
     if (storedAsset.tokenAddress) delete storedAsset.coin;
     await this.storage.saveRule(ownerId, storedAsset, body.thresholdPct as number, code);
     return publicRule(await this.storage.getRule(ownerId, selector.assetKey));
